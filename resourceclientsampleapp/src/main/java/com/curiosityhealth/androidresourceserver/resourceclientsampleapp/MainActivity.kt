@@ -26,7 +26,7 @@ class MainActivity : AppCompatActivity() {
         val config = AuthorizationClientConfig(
             "sample_client_id",
             "com.curiosityhealth.androidresourceserver.resourceserversampleapp",
-            "com.curiosityhealth.androidresourceserver.resourceserversampleapp.service.SampleHandshakeService"
+            "com.curiosityhealth.androidresourceserver.resourceserversampleapp.broadcastreceiver.SampleHandshakeBroadcastReceiver"
         )
 
         val authorizationClient = AuthorizationClient(this, config)

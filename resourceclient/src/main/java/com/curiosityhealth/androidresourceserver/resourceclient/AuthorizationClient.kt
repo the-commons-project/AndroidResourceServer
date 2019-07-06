@@ -125,12 +125,14 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
             this.clientEncryptionPrivateKeysetHandle = clientEncryptionPrivateKeysetHandle
             this.m1Data = m1Data
 
-            JobIntentService.enqueueWork(
-                context,
-                intent.component!!,
-                0,
-                intent
-            )
+//            JobIntentService.enqueueWork(
+//                context,
+//                intent.component!!,
+//                0,
+//                intent
+//            )
+
+            context.sendBroadcast(intent)
         }
         catch (gse: GeneralSecurityException) {
             callback.onError(gse)
@@ -200,7 +202,7 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
                 receiver
             )
 
-            context.startService(intent)
+            context.sendBroadcast(intent)
 
         }
         catch (gse: GeneralSecurityException) {

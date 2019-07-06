@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.ResultReceiver
+import kotlin.math.acos
 
 sealed class HandshakeException(s: String) : Exception(s) {
     class MalformedRequest(s: String): HandshakeException(s)
@@ -20,7 +21,28 @@ class Handshake {
     }
 
     enum class Actions {
-        BEGIN_HANDSHAKE, COMPLETE_HANDSHAKE
+        BEGIN_HANDSHAKE, COMPLETE_HANDSHAKE;
+
+        fun toActionString(): String {
+            when (this) {
+                BEGIN_HANDSHAKE -> {
+                    return "com.curiosityhealth.androidresourceserver.intent.action.BEGIN_HANDSHAKE"
+                }
+                COMPLETE_HANDSHAKE -> {
+                    return "com.curiosityhealth.androidresourceserver.intent.action.COMPLETE_HANDSHAKE"
+                }
+            }
+        }
+
+        companion object {
+            fun fromActionString(actionString: String) : Actions? {
+                when (actionString) {
+                    "com.curiosityhealth.androidresourceserver.intent.action.BEGIN_HANDSHAKE" -> { return BEGIN_HANDSHAKE}
+                    "com.curiosityhealth.androidresourceserver.intent.action.COMPLETE_HANDSHAKE" -> { return COMPLETE_HANDSHAKE}
+                    else -> { return null }
+                }
+            }
+        }
     }
 
     enum class REQUEST_PARAMS {
@@ -76,7 +98,7 @@ class BeginHandshake {
                     handshakeServiceClass
                 )
 
-                intent.action = Handshake.Actions.BEGIN_HANDSHAKE.name
+                intent.action = Handshake.Actions.BEGIN_HANDSHAKE.toActionString()
 
                 intent.putExtra(Handshake.REQUEST_PARAMS.CLIENT_ID.name, request.clientId)
                 intent.putExtra(Handshake.REQUEST_PARAMS.STATE.name, request.state)
@@ -223,7 +245,7 @@ class CompleteHandshake {
                     handshakeServiceClass
                 )
 
-                intent.action = Handshake.Actions.COMPLETE_HANDSHAKE.name
+                intent.action = Handshake.Actions.COMPLETE_HANDSHAKE.toActionString()
 
                 intent.putExtra(Handshake.REQUEST_PARAMS.CLIENT_ID.name, request.clientId)
                 intent.putExtra(Handshake.REQUEST_PARAMS.STATE.name, request.state)

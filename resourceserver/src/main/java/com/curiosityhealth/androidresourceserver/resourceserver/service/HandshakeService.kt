@@ -69,9 +69,11 @@ abstract class HandshakeService : JobIntentService() {
         intent.let { handshakeIntent ->
 
             val resultReceiver = handshakeIntent.getParcelableExtra<ResultReceiver>(Handshake.REQUEST_PARAMS.RESPONSE_RECEIVER.name)
-            val action = handshakeIntent.action
+
+            val action = handshakeIntent.action?.let { Handshake.Actions.fromActionString(it) }
+
             when(action) {
-                Handshake.Actions.BEGIN_HANDSHAKE.name -> {
+                Handshake.Actions.BEGIN_HANDSHAKE -> {
                     val request = BeginHandshake.Request.fromIntent(handshakeIntent)
                     if (request != null) {
                         handleBeginHandshake(intent, request, resultReceiver)
@@ -85,7 +87,7 @@ abstract class HandshakeService : JobIntentService() {
                     }
                     return
                 }
-                Handshake.Actions.COMPLETE_HANDSHAKE.name -> {
+                Handshake.Actions.COMPLETE_HANDSHAKE -> {
                     val request = CompleteHandshake.Request.fromIntent(handshakeIntent)
                     if (request != null) {
                         handleCompleteHandshake(intent, request, resultReceiver)
@@ -108,8 +110,6 @@ abstract class HandshakeService : JobIntentService() {
                     return
                 }
             }
-
-
         }
 
     }
