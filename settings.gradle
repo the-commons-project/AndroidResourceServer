@@ -1,0 +1,1 @@
+include ':resourceserver', ':resourceclient', ':resourceserversampleapp', ':resourceclientsampleapp', ':common'
