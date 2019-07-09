@@ -21,7 +21,7 @@ class Handshake {
     }
 
     enum class Actions {
-        BEGIN_HANDSHAKE, COMPLETE_HANDSHAKE;
+        BEGIN_HANDSHAKE, COMPLETE_HANDSHAKE, VERIFY_HANDSHAKE;
 
         fun toActionString(): String {
             when (this) {
@@ -31,6 +31,9 @@ class Handshake {
                 COMPLETE_HANDSHAKE -> {
                     return "com.curiosityhealth.androidresourceserver.intent.action.COMPLETE_HANDSHAKE"
                 }
+                VERIFY_HANDSHAKE -> {
+                    return "com.curiosityhealth.androidresourceserver.intent.action.VERIFY_HANDSHAKE"
+                }
             }
         }
 
@@ -39,6 +42,7 @@ class Handshake {
                 when (actionString) {
                     "com.curiosityhealth.androidresourceserver.intent.action.BEGIN_HANDSHAKE" -> { return BEGIN_HANDSHAKE}
                     "com.curiosityhealth.androidresourceserver.intent.action.COMPLETE_HANDSHAKE" -> { return COMPLETE_HANDSHAKE}
+                    "com.curiosityhealth.androidresourceserver.intent.action.VERIFY_HANDSHAKE" -> { return VERIFY_HANDSHAKE}
                     else -> { return null }
                 }
             }
@@ -302,6 +306,141 @@ class CompleteHandshake {
                 if (resultCode == Handshake.RESULT_CODE_OK) {
 
                     val response = CompleteHandshake.Response.responseFromBundle(resultData)
+                    if (response != null) {
+                        cb.onSuccess(response)
+                    }
+                    else {
+                        cb.onError(HandshakeException.MalformedResponse("malformed response"))
+                    }
+
+                } else {
+                    val exception: Exception? = resultData.getSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name) as? Exception
+                    if (exception != null) {
+                        cb.onError(exception)
+                    }
+                    else {
+                        cb.onError(HandshakeException.MalformedResponse("malformed response"))
+                    }
+                }
+            }
+        }
+
+    }
+}
+
+class VerifyHandshake {
+
+    data class Request(
+        val clientId: String,
+        val data: ByteArray,
+        val signature: ByteArray,
+        val encryptedData: ByteArray,
+        val contextInfo: ByteArray
+    ) {
+        companion object {
+
+            fun fromIntent(intent: Intent) : Request? {
+                val clientId = intent.getStringExtra(Handshake.REQUEST_PARAMS.CLIENT_ID.name) ?: return null
+                val data = intent.getByteArrayExtra(Handshake.REQUEST_PARAMS.DATA.name) ?: return null
+                val signature = intent.getByteArrayExtra(Handshake.REQUEST_PARAMS.SIGNATURE.name) ?: return null
+                val encryptedData = intent.getByteArrayExtra(Handshake.REQUEST_PARAMS.ENCRYPTED_DATA.name) ?: return null
+                val contextInfo = intent.getByteArrayExtra(Handshake.REQUEST_PARAMS.CONTEXT_INFO.name) ?: return null
+
+                return Request(
+                    clientId,
+                    data,
+                    signature,
+                    encryptedData,
+                    contextInfo
+                )
+            }
+
+            fun requestIntent(
+                serverPackage: String,
+                handshakeServiceClass: String,
+                request: Request,
+                responseReceiver: ResponseReceiver
+            ) : Intent {
+                val intent = Intent()
+
+                intent.component = ComponentName(
+                    serverPackage,
+                    handshakeServiceClass
+                )
+
+                intent.action = Handshake.Actions.VERIFY_HANDSHAKE.toActionString()
+
+                intent.putExtra(Handshake.REQUEST_PARAMS.CLIENT_ID.name, request.clientId)
+                intent.putExtra(Handshake.REQUEST_PARAMS.DATA.name, request.data)
+                intent.putExtra(Handshake.REQUEST_PARAMS.SIGNATURE.name, request.signature)
+                intent.putExtra(Handshake.REQUEST_PARAMS.ENCRYPTED_DATA.name, request.encryptedData)
+                intent.putExtra(Handshake.REQUEST_PARAMS.CONTEXT_INFO.name, request.contextInfo)
+                intent.putExtra(Handshake.REQUEST_PARAMS.RESPONSE_RECEIVER.name, responseReceiver)
+
+                return intent
+            }
+        }
+    }
+
+
+
+    data class Response(
+        val clientId: String,
+        val data: ByteArray,
+        val signature: ByteArray,
+        val encryptedData: ByteArray,
+        val contextInfo: ByteArray
+    ) {
+
+        companion object {
+            fun responseFromBundle(bundle: Bundle) : Response? {
+
+                val clientId = bundle.getString(Handshake.RESPONSE_PARAMS.CLIENT_ID.name) ?: return null
+                val data = bundle.getByteArray(Handshake.RESPONSE_PARAMS.DATA.name) ?: return null
+                val signature = bundle.getByteArray(Handshake.RESPONSE_PARAMS.SIGNATURE.name) ?: return null
+                val encryptedData = bundle.getByteArray(Handshake.RESPONSE_PARAMS.ENCRYPTED_DATA.name) ?: return null
+                val contextInfo = bundle.getByteArray(Handshake.RESPONSE_PARAMS.CONTEXT_INFO.name) ?: return null
+
+                return Response(
+                    clientId,
+                    data,
+                    signature,
+                    encryptedData,
+                    contextInfo
+                )
+            }
+        }
+
+        fun toBundle() : Bundle {
+            val bundle = Bundle()
+            bundle.putString(Handshake.RESPONSE_PARAMS.CLIENT_ID.name, this.clientId)
+            bundle.putByteArray(Handshake.RESPONSE_PARAMS.DATA.name, this.data)
+            bundle.putByteArray(Handshake.RESPONSE_PARAMS.SIGNATURE.name, this.signature)
+            bundle.putByteArray(Handshake.RESPONSE_PARAMS.ENCRYPTED_DATA.name, this.encryptedData)
+            bundle.putByteArray(Handshake.RESPONSE_PARAMS.CONTEXT_INFO.name, this.contextInfo)
+
+            return bundle
+        }
+    }
+
+
+
+    class ResponseReceiver(handler: Handler) : ResultReceiver(handler) {
+
+        interface ResponseReceiverCallBack {
+            fun onSuccess(response: Response)
+            fun onError(exception: Exception)
+        }
+
+        var callback: ResponseReceiverCallBack? = null
+        override fun onReceiveResult(resultCode: Int, resultData: Bundle) {
+
+            val cb: ResponseReceiverCallBack? = this.callback
+
+            if (cb != null) {
+                if (resultCode == Handshake.RESULT_CODE_OK) {
+
+                    val response = Response.responseFromBundle(resultData)
                     if (response != null) {
                         cb.onSuccess(response)
                     }

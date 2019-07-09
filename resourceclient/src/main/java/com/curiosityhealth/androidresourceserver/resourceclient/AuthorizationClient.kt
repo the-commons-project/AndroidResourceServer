@@ -21,7 +21,31 @@ import java.io.IOException
 import java.security.GeneralSecurityException
 
 
-class AuthorizationClient(val context: Context, val config: AuthorizationClientConfig) {
+class AuthorizationClient(val context: Context, val config: AuthorizationClientConfig, val clientStorage: AuthorizationClientStorage) {
+
+    interface AuthorizationClientStorage {
+        @Throws(GeneralSecurityException::class)
+        fun getClientPrivateSigningKey() : KeysetHandle?
+        @Throws(GeneralSecurityException::class)
+        fun storeClientPrivateSigningKey(keysetHandle: KeysetHandle)
+
+        @Throws(GeneralSecurityException::class)
+        fun getClientPrivateEncryptionKey() : KeysetHandle?
+        @Throws(GeneralSecurityException::class)
+        fun storeClientPrivateEncryptionKey(keysetHandle: KeysetHandle)
+
+        @Throws(GeneralSecurityException::class)
+        fun getServerPublicSigningKey() : KeysetHandle?
+        @Throws(GeneralSecurityException::class)
+        fun storeServerPublicSigningKey(keysetHandle: KeysetHandle)
+
+        @Throws(GeneralSecurityException::class)
+        fun getServerPublicEncryptionKey() : KeysetHandle?
+        @Throws(GeneralSecurityException::class)
+        fun storeServerPublicEncryptionKey(keysetHandle: KeysetHandle)
+
+        fun clear()
+    }
 
     init {
         TinkConfig.register()
@@ -32,7 +56,134 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
     private var m1Data: ByteArray? = null
     private var state: Long = -1
 
-    fun doHandshake(context: Context, completion: (successful: Boolean, exception: Exception?) -> Unit) {
+    fun authorize(context: Context, completion: (successful: Boolean, exception: Exception?) -> Unit) {
+
+        this.checkHandshake { checkSuccessful, checkException ->
+            if (checkSuccessful) {
+                doAuthorization(context, completion)
+            }
+            else {
+                doHandshake(context) { successful, exception ->
+
+                    if (successful) {
+                        doAuthorization(context, completion)
+                    }
+                    else {
+                        completion(false, exception)
+                    }
+
+                }
+            }
+        }
+
+    }
+
+    private fun doAuthorization(context: Context, completion: (successful: Boolean, exception: Exception?) -> Unit) {
+        completion(true, null)
+    }
+
+    private fun checkHandshake(completion: (successful: Boolean, exception: Exception?) -> Unit) {
+
+        //potentially verify handshake here
+        val verifyHandshakeCallback = object : VerifyHandshake.ResponseReceiver.ResponseReceiverCallBack {
+            override fun onSuccess(response: VerifyHandshake.Response) {
+                //validate response
+                //using server public signing key, verify signature
+                val serverPublicSigningKey = clientStorage.getServerPublicSigningKey()
+                if (serverPublicSigningKey == null) {
+                    clientStorage.clear()
+                    completion(false, null)
+                    return
+                }
+
+                val verifier = PublicKeyVerifyFactory.getPrimitive(serverPublicSigningKey)
+                verifier.verify(response.signature, response.data)
+
+                //using client private encryption key, decrypt data
+                val clientPrivateEncryptionKey = clientStorage.getClientPrivateEncryptionKey()
+                if (clientPrivateEncryptionKey == null) {
+                    clientStorage.clear()
+                    completion(false, null)
+                    return
+                }
+
+                val hybridDecrypt = HybridDecryptFactory.getPrimitive(clientPrivateEncryptionKey)
+                val decryptedData = hybridDecrypt.decrypt(response.encryptedData, response.contextInfo)
+
+                //compare decrypted data to data
+                if (!response.data.contentEquals(decryptedData)) {
+                    clientStorage.clear()
+                    completion(false, null)
+                    return
+                }
+
+                completion(true, null)
+            }
+
+            override fun onError(exception: Exception) {
+                //clear client info
+                clientStorage.clear()
+                completion(false, exception)
+            }
+
+        }
+
+        //
+        try {
+
+            //generate new data and sign it using client private signing key
+            val clientPrivateSigningKey = this.clientStorage.getClientPrivateSigningKey()
+            if (clientPrivateSigningKey == null) {
+                completion(false, null)
+                return
+            }
+
+            val data = Random.randBytes(1024)
+            val signer = PublicKeySignFactory.getPrimitive(clientPrivateSigningKey)
+            val signature = signer.sign(data)
+
+            //encrypt data using server public encryption key
+            val serverPublicEncryptionKey = this.clientStorage.getServerPublicEncryptionKey()
+            if (serverPublicEncryptionKey == null) {
+                completion(false, null)
+                return
+            }
+
+            val hybridEncrypt = HybridEncryptFactory.getPrimitive(serverPublicEncryptionKey)
+            val contextInfo = Random.randBytes(64)
+            val encryptedData = hybridEncrypt.encrypt(data, contextInfo)
+
+            val request = VerifyHandshake.Request(
+                this.config.clientId,
+                data,
+                signature,
+                encryptedData,
+                contextInfo
+            )
+
+            val receiver = VerifyHandshake.ResponseReceiver(Handler(context.mainLooper))
+            receiver.callback = verifyHandshakeCallback
+
+            val intent = VerifyHandshake.Request.requestIntent(
+                config.serverPackage,
+                config.handshakeServiceClass,
+                request,
+                receiver
+            )
+
+            context.sendBroadcast(intent)
+        }
+        catch (gse: GeneralSecurityException) {
+            verifyHandshakeCallback.onError(gse)
+            return
+        }
+
+//        authorizationClient.beginHandshake(context, beginHandshakeCallback)
+    }
+
+
+
+    private fun doHandshake(context: Context, completion: (successful: Boolean, exception: Exception?) -> Unit) {
         val authorizationClient = this
 
         val completeHandshakeCallback = object : CompleteHandshake.ResponseReceiver.ResponseReceiverCallBack {
@@ -44,6 +195,7 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
             }
 
             override fun onError(exception: Exception) {
+                clientStorage.clear()
                 completion(false, exception)
             }
         }
@@ -71,6 +223,8 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
         this.clientSigningPrivateKeysetHandle = null
         this.clientEncryptionPrivateKeysetHandle = null
         this.m1Data = null
+
+        this.clientStorage.clear()
 
         try {
 
@@ -125,13 +279,6 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
             this.clientEncryptionPrivateKeysetHandle = clientEncryptionPrivateKeysetHandle
             this.m1Data = m1Data
 
-//            JobIntentService.enqueueWork(
-//                context,
-//                intent.component!!,
-//                0,
-//                intent
-//            )
-
             context.sendBroadcast(intent)
         }
         catch (gse: GeneralSecurityException) {
@@ -185,6 +332,11 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
 
             val m2EncryptedData = hybridEncrypt.encrypt(response.m2Data, contextInfo)
 
+            this.clientStorage.storeClientPrivateSigningKey(clientSigningPrivateKeysetHandle)
+            this.clientStorage.storeClientPrivateEncryptionKey(clientEncryptionPrivateKeysetHandle)
+            this.clientStorage.storeServerPublicSigningKey(serverSigningPublicKey)
+            this.clientStorage.storeServerPublicEncryptionKey(serverEncryptionPublicKey)
+
             val request = CompleteHandshake.Request(
                 config.clientId,
                 this.state,
@@ -215,72 +367,5 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
         }
 
     }
-
-//    fun getBeginHandshakeRequestIntent(): Intent? {
-//
-//        val intent = Intent()
-//        intent.component = ComponentName(
-//            config.serverPackage,
-//            config.handshakeServiceClass
-//        )
-//
-//        val randomBytes = Random.randBytes(1024)
-//
-//        // 1. Generate the private key material.
-//        val signPrivateKeysetHandle = KeysetHandle.generateNew(
-//            SignatureKeyTemplates.ECDSA_P256
-//        )
-//
-//        val signer = PublicKeySignFactory.getPrimitive(signPrivateKeysetHandle)
-//        val signature = signer.sign(randomBytes)
-//
-//
-//        // Obtain the public key material.
-//        val signPublicKeysetHandle = signPrivateKeysetHandle.publicKeysetHandle
-//
-//        val stream = ByteArrayOutputStream()
-//        CleartextKeysetHandle.write(signPublicKeysetHandle, JsonKeysetWriter.withOutputStream(stream))
-//
-//        val bytes = stream.toByteArray()
-//
-//        val otherPublicKeysetHandle = CleartextKeysetHandle.read(JsonKeysetReader.withBytes(bytes))
-//        val verifier = PublicKeyVerifyFactory.getPrimitive(otherPublicKeysetHandle)
-//        verifier.verify(signature, randomBytes)
-//
-//
-//        // ENCRYPTING
-//
-//
-//
-//        val privateKeysetHandle = KeysetHandle.generateNew(
-//            HybridKeyTemplates.ECIES_P256_HKDF_HMAC_SHA256_AES128_GCM
-//        )
-//
-//
-//        val publicKeysetHandle = privateKeysetHandle.publicKeysetHandle
-//
-//        // 2. Get the primitive.
-//        val hybridEncrypt = HybridEncryptFactory.getPrimitive(publicKeysetHandle)
-////        val hybridEncrypt = publicKeysetHandle.getPrimitive(HybridEncrypt::class.java)
-//
-//        val plaintext: ByteArray = randomBytes
-//        val contextInfo: ByteArray = "context info".toByteArray()
-//        // 3. Use the primitive.
-//        val ciphertext = hybridEncrypt.encrypt(plaintext, contextInfo)
-//
-//        // DECRYPTING
-//
-//        // 2. Get the primitive.
-////        val hybridDecrypt = privateKeysetHandle.getPrimitive(
-////            HybridDecrypt::class.java
-////        )
-//        val hybridDecrypt = HybridDecryptFactory.getPrimitive(privateKeysetHandle)
-//
-//        // 3. Use the primitive.
-//        val decryptedPlaintextBytes = hybridDecrypt.decrypt(ciphertext, contextInfo)
-//        assert(randomBytes.contentEquals(decryptedPlaintextBytes))
-//
-//        return null
-//    }
 
 }

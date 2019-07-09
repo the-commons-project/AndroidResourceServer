@@ -29,8 +29,13 @@ class MainActivity : AppCompatActivity() {
             "com.curiosityhealth.androidresourceserver.resourceserversampleapp.broadcastreceiver.SampleHandshakeBroadcastReceiver"
         )
 
-        val authorizationClient = AuthorizationClient(this, config)
-        authorizationClient.doHandshake(this) { success, exception ->
+        val authorizationClient = AuthorizationClient(
+            this,
+            config,
+            SampleClientStorage.shared
+        )
+
+        authorizationClient.authorize(this) { success, exception ->
 
         }
 

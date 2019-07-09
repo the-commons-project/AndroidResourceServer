@@ -23,6 +23,7 @@ import com.google.crypto.tink.signature.SignatureKeyTemplates
 import com.google.crypto.tink.subtle.Random
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.Serializable
 import java.security.GeneralSecurityException
 
 abstract class HandshakeService : JobIntentService() {

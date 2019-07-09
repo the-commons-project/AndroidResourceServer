@@ -1,14 +1,14 @@
 package com.curiosityhealth.androidresourceserver.resourceserver.broadcastreceiver
 
 import android.content.BroadcastReceiver
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.ResultReceiver
-import com.curiosityhealth.androidresourceserver.common.BeginHandshake
-import com.curiosityhealth.androidresourceserver.common.CompleteHandshake
-import com.curiosityhealth.androidresourceserver.common.Handshake
-import com.curiosityhealth.androidresourceserver.common.HandshakeException
+import com.curiosityhealth.androidresourceserver.common.*
+import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientHandshake
+import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientManager
 import com.curiosityhealth.androidresourceserver.resourceserver.service.HandshakeService
 import com.google.crypto.tink.CleartextKeysetHandle
 import com.google.crypto.tink.JsonKeysetReader
@@ -24,6 +24,7 @@ import com.google.crypto.tink.subtle.Random
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.security.GeneralSecurityException
+import kotlin.math.sign
 
 abstract class HandshakeBroadcastReceiver : BroadcastReceiver() {
 
@@ -32,6 +33,7 @@ abstract class HandshakeBroadcastReceiver : BroadcastReceiver() {
             intent: Intent,
             request: BeginHandshake.Request,
             resultReceiver: ResultReceiver,
+            clientManager: ClientManager,
             handshakeServiceStorage: HandshakeService.HandshakeServiceStorage
         ) {
 
@@ -148,6 +150,7 @@ abstract class HandshakeBroadcastReceiver : BroadcastReceiver() {
             intent: Intent,
             request: CompleteHandshake.Request,
             resultReceiver: ResultReceiver,
+            clientManager: ClientManager,
             handshakeServiceStorage: HandshakeService.HandshakeServiceStorage
         ) {
 
@@ -212,6 +215,26 @@ abstract class HandshakeBroadcastReceiver : BroadcastReceiver() {
                     return
                 }
 
+                val saved = this.saveClientHandshake(
+                    request.clientId,
+                    request.state,
+                    clientManager,
+                    handshakeServiceStorage
+                )
+
+                if (!saved) {
+
+                    //clear client info
+                    handshakeServiceStorage.clear(request.clientId)
+
+                    val code = Handshake.RESULT_CODE_ERROR
+                    val bundle = Bundle()
+                    val error = HandshakeException.MalformedRequest("Could not save client info")
+                    bundle.putSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name, error)
+                    resultReceiver.send(code, bundle)
+                    return
+                }
+
                 val response = CompleteHandshake.Response(
                     request.clientId,
                     request.state,
@@ -222,12 +245,20 @@ abstract class HandshakeBroadcastReceiver : BroadcastReceiver() {
                 resultReceiver.send(Handshake.RESULT_CODE_OK, bundle)
             }
             catch (gse: GeneralSecurityException) {
+
+                //clear client info
+                handshakeServiceStorage.clear(request.clientId)
+
                 val code = Handshake.RESULT_CODE_ERROR
                 val bundle = Bundle()
                 bundle.putSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name, gse)
                 resultReceiver.send(code, bundle)
             }
             catch (ioe: IOException) {
+
+                //clear client info
+                handshakeServiceStorage.clear(request.clientId)
+
                 val code = Handshake.RESULT_CODE_ERROR
                 val bundle = Bundle()
                 bundle.putSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name, ioe)
@@ -235,9 +266,133 @@ abstract class HandshakeBroadcastReceiver : BroadcastReceiver() {
             }
 
         }
+
+        fun handleVerifyHandshake(
+            intent: Intent,
+            request: VerifyHandshake.Request,
+            resultReceiver: ResultReceiver,
+            clientManager: ClientManager
+        ) {
+
+            val clientHandshake = clientManager.getClientHandshake(request.clientId)
+            if (clientHandshake == null) {
+                val code = Handshake.RESULT_CODE_ERROR
+                val bundle = Bundle()
+                val error = HandshakeException.MalformedRequest("Needs handshake")
+                bundle.putSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name, error)
+                resultReceiver.send(code, bundle)
+                return
+            }
+
+            try {
+
+                //using client public signing key, verify signature
+                val verifier = PublicKeyVerifyFactory.getPrimitive(clientHandshake.clientPublicSigningKey)
+                verifier.verify(request.signature, request.data)
+
+                //using server private encryption key, decrypt data
+                val hybridDecrypt = HybridDecryptFactory.getPrimitive(clientHandshake.serverPrivateEncryptionKey)
+                val decryptedData = hybridDecrypt.decrypt(request.encryptedData, request.contextInfo)
+
+                //compare decrypted data to data
+                if (!request.data.contentEquals(decryptedData)) {
+
+                    //clear client handshake info
+                    clientManager.clearClientHandshake(request.clientId)
+
+                    val code = Handshake.RESULT_CODE_ERROR
+                    val bundle = Bundle()
+                    val error = HandshakeException.MalformedRequest("Invalid data")
+                    bundle.putSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name, error)
+                    resultReceiver.send(code, bundle)
+                    return
+                }
+
+                //generate new data and sign it using server private signing key
+                val data = Random.randBytes(1024)
+                val signer = PublicKeySignFactory.getPrimitive(clientHandshake.serverPrivateSigningKey)
+                val signature = signer.sign(data)
+
+                //encrypt data using client public encryption key
+                val hybridEncrypt = HybridEncryptFactory.getPrimitive(clientHandshake.clientPublicEncryptionKey)
+                val contextInfo = Random.randBytes(64)
+                val encryptedData = hybridEncrypt.encrypt(data, contextInfo)
+
+                val response = VerifyHandshake.Response(
+                    request.clientId,
+                    data,
+                    signature,
+                    encryptedData,
+                    contextInfo
+                )
+
+                val bundle = response.toBundle()
+                resultReceiver.send(Handshake.RESULT_CODE_OK, bundle)
+            }
+            catch (gse: GeneralSecurityException) {
+
+                //clear client handshake info
+                clientManager.clearClientHandshake(request.clientId)
+
+                val code = Handshake.RESULT_CODE_ERROR
+                val bundle = Bundle()
+                bundle.putSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name, gse)
+                resultReceiver.send(code, bundle)
+            }
+            catch (ioe: IOException) {
+
+                //clear client handshake info
+                clientManager.clearClientHandshake(request.clientId)
+
+                val code = Handshake.RESULT_CODE_ERROR
+                val bundle = Bundle()
+                bundle.putSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name, ioe)
+                resultReceiver.send(code, bundle)
+            }
+
+        }
+
+        fun getClientHandshake(
+            clientId: String,
+            state: Long,
+            handshakeServiceStorage: HandshakeService.HandshakeServiceStorage
+        ) : ClientHandshake? {
+            val clientPublicSigningKey: KeysetHandle = handshakeServiceStorage.getClientPublicSigningKey(clientId, state) ?: return null
+            val clientPublicEncryptionKey: KeysetHandle = handshakeServiceStorage.getClientPublicEncryptionKey(clientId, state) ?: return null
+            val serverPrivateSigningKey: KeysetHandle = handshakeServiceStorage.getServerPrivateSigningKey(clientId, state) ?: return null
+            val serverPrivateEncryptionKey: KeysetHandle = handshakeServiceStorage.getServerPrivateEncryptionKey(clientId, state) ?: return null
+
+            return ClientHandshake(
+                clientId,
+                clientPublicSigningKey,
+                clientPublicEncryptionKey,
+                serverPrivateSigningKey,
+                serverPrivateEncryptionKey
+            )
+        }
+
+        fun saveClientHandshake(
+            clientId: String,
+            state: Long,
+            clientManager: ClientManager,
+            handshakeServiceStorage: HandshakeService.HandshakeServiceStorage
+        ) : Boolean {
+
+            val clientHandshake = this.getClientHandshake(clientId, state, handshakeServiceStorage) ?: return false
+            clientManager.registerClientHandshake(
+                clientId,
+                clientHandshake
+            )
+
+            handshakeServiceStorage.clear(clientId)
+
+            return true
+        }
     }
 
+    abstract val clientManager: ClientManager
     abstract val handshakeServiceStorage : HandshakeService.HandshakeServiceStorage
+//    abstract val handshakeClientRegistrationStorage : HandshakeService.HandshakeClientRegistrationStorage
 
     override fun onReceive(context: Context?, intent: Intent?) {
         intent?.let { handshakeIntent ->
@@ -250,7 +405,13 @@ abstract class HandshakeBroadcastReceiver : BroadcastReceiver() {
                 Handshake.Actions.BEGIN_HANDSHAKE -> {
                     val request = BeginHandshake.Request.fromIntent(handshakeIntent)
                     if (request != null) {
-                        handleBeginHandshake(intent, request, resultReceiver, this.handshakeServiceStorage)
+                        handleBeginHandshake(
+                            intent,
+                            request,
+                            resultReceiver,
+                            this.clientManager,
+                            this.handshakeServiceStorage
+                        )
                     }
                     else {
                         val code = Handshake.RESULT_CODE_ERROR
@@ -264,7 +425,32 @@ abstract class HandshakeBroadcastReceiver : BroadcastReceiver() {
                 Handshake.Actions.COMPLETE_HANDSHAKE -> {
                     val request = CompleteHandshake.Request.fromIntent(handshakeIntent)
                     if (request != null) {
-                        handleCompleteHandshake(intent, request, resultReceiver, this.handshakeServiceStorage)
+                        handleCompleteHandshake(
+                            intent,
+                            request,
+                            resultReceiver,
+                            this.clientManager,
+                            this.handshakeServiceStorage
+                        )
+                    }
+                    else {
+                        val code = Handshake.RESULT_CODE_ERROR
+                        val bundle = Bundle()
+                        val error = HandshakeException.MalformedRequest("could not generate request from intent")
+                        bundle.putSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name, error)
+                        resultReceiver.send(code, bundle)
+                    }
+                    return
+                }
+                Handshake.Actions.VERIFY_HANDSHAKE -> {
+                    val request = VerifyHandshake.Request.fromIntent(handshakeIntent)
+                    if (request != null) {
+                        handleVerifyHandshake(
+                            intent,
+                            request,
+                            resultReceiver,
+                            this.clientManager
+                        )
                     }
                     else {
                         val code = Handshake.RESULT_CODE_ERROR

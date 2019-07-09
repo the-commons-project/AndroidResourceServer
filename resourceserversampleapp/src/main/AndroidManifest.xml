@@ -27,6 +27,7 @@
             <intent-filter>
                 <action android:name="com.curiosityhealth.androidresourceserver.intent.action.BEGIN_HANDSHAKE"/>
                 <action android:name="com.curiosityhealth.androidresourceserver.intent.action.COMPLETE_HANDSHAKE"/>
+                <action android:name="com.curiosityhealth.androidresourceserver.intent.action.VERIFY_HANDSHAKE"/>
             </intent-filter>
         </receiver>
 
