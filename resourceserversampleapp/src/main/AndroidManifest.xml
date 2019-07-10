@@ -31,6 +31,12 @@
             </intent-filter>
         </receiver>
 
+        <receiver android:name=".broadcastreceiver.SampleAuthorizationBroadcastReceiver">
+            <intent-filter>
+                <action android:name="com.curiosityhealth.androidresourceserver.intent.action.BEGIN_AUTHORIZATION"/>
+            </intent-filter>
+        </receiver>
+
     </application>
 
 

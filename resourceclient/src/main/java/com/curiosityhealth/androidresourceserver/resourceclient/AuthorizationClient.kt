@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.os.Handler
 import androidx.core.app.JobIntentService
 import com.curiosityhealth.androidresourceserver.common.*
+import com.curiosityhealth.androidresourceserver.common.Authorization.Authorization
+import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequest
 import com.google.crypto.tink.*
 import com.google.crypto.tink.config.TinkConfig
 import com.google.crypto.tink.hybrid.HybridDecryptFactory
@@ -54,19 +56,36 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
     private var clientSigningPrivateKeysetHandle: KeysetHandle? = null
     private var clientEncryptionPrivateKeysetHandle: KeysetHandle? = null
     private var m1Data: ByteArray? = null
-    private var state: Long = -1
+    private var handshakeState: Long = -1
 
-    fun authorize(context: Context, completion: (successful: Boolean, exception: Exception?) -> Unit) {
+    //authorization
+    private var authorizationState: Long = -1
+
+    fun authorize(
+        context: Context,
+        requestedScopes: Set<ScopeRequest>,
+        includeRefreshToken: Boolean,
+        completion: (successful: Boolean, exception: Exception?) -> Unit) {
 
         this.checkHandshake { checkSuccessful, checkException ->
             if (checkSuccessful) {
-                doAuthorization(context, completion)
+                doAuthorization(
+                    context,
+                    requestedScopes,
+                    includeRefreshToken,
+                    completion
+                )
             }
             else {
                 doHandshake(context) { successful, exception ->
 
                     if (successful) {
-                        doAuthorization(context, completion)
+                        doAuthorization(
+                            context,
+                            requestedScopes,
+                            includeRefreshToken,
+                            completion
+                        )
                     }
                     else {
                         completion(false, exception)
@@ -78,8 +97,46 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
 
     }
 
-    private fun doAuthorization(context: Context, completion: (successful: Boolean, exception: Exception?) -> Unit) {
+    private fun doAuthorization(
+        context: Context,
+        requestedScopes: Set<ScopeRequest>,
+        includeRefreshToken: Boolean,
+        completion: (successful: Boolean, exception: Exception?) -> Unit
+    ) {
         completion(true, null)
+
+        val authorizationCallback = object : Authorization.ResponseReceiver.ResponseReceiverCallBack {
+            override fun onSuccess(response: Authorization.Response) {
+                TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
+            }
+
+            override fun onError(exception: Exception) {
+                TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
+            }
+        }
+
+        val state = kotlin.random.Random.nextLong()
+        this.authorizationState = state
+
+
+        val request = Authorization.Request(
+            this.config.clientId,
+            state,
+            requestedScopes,
+            includeRefreshToken
+        )
+
+        val receiver = Authorization.ResponseReceiver(Handler(context.mainLooper))
+        receiver.callback = authorizationCallback
+
+        val intent = Authorization.Request.requestIntent(
+            config.serverPackage,
+            config.authorizationServiceClass,
+            request,
+            receiver
+        )
+
+        context.sendBroadcast(intent)
     }
 
     private fun checkHandshake(completion: (successful: Boolean, exception: Exception?) -> Unit) {
@@ -178,7 +235,6 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
             return
         }
 
-//        authorizationClient.beginHandshake(context, beginHandshakeCallback)
     }
 
 
@@ -257,7 +313,7 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
             receiver.callback = callback
 
             val state = kotlin.random.Random.nextLong()
-            this.state = state
+            this.handshakeState = state
 
             val request = BeginHandshake.Request(
                 config.clientId,
@@ -339,7 +395,7 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
 
             val request = CompleteHandshake.Request(
                 config.clientId,
-                this.state,
+                this.handshakeState,
                 m2EncryptedData,
                 contextInfo
             )

@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeAccess
+import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequest
+import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequestException
 import com.curiosityhealth.androidresourceserver.common.BeginHandshake
 import com.curiosityhealth.androidresourceserver.resourceclient.AuthorizationClient
 import com.curiosityhealth.androidresourceserver.resourceclient.AuthorizationClientConfig
@@ -26,7 +29,8 @@ class MainActivity : AppCompatActivity() {
         val config = AuthorizationClientConfig(
             "sample_client_id",
             "com.curiosityhealth.androidresourceserver.resourceserversampleapp",
-            "com.curiosityhealth.androidresourceserver.resourceserversampleapp.broadcastreceiver.SampleHandshakeBroadcastReceiver"
+            "com.curiosityhealth.androidresourceserver.resourceserversampleapp.broadcastreceiver.SampleHandshakeBroadcastReceiver",
+            "com.curiosityhealth.androidresourceserver.resourceserversampleapp.broadcastreceiver.SampleAuthorizationBroadcastReceiver"
         )
 
         val authorizationClient = AuthorizationClient(
@@ -35,7 +39,16 @@ class MainActivity : AppCompatActivity() {
             SampleClientStorage.shared
         )
 
-        authorizationClient.authorize(this) { success, exception ->
+        val requestedScopes = setOf<ScopeRequest>(
+            ScopeRequest("sample_scope_1", ScopeAccess.READ),
+            ScopeRequest("sample_scope_2", ScopeAccess.READ)
+        )
+
+        authorizationClient.authorize(
+            this,
+            requestedScopes,
+            true
+        ) { success, exception ->
 
         }
 

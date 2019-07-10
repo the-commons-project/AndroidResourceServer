@@ -1,4 +1,4 @@
-package com.curiosityhealth.androidresourceserver.common
+package com.curiosityhealth.androidresourceserver.common.Authorization
 
 open class Scope(
     val identifier: String,
@@ -62,13 +62,15 @@ data class ScopeRequest(
 
             return ScopeRequest(
                 components[0],
-                ScopeAccess.fromAccessString(components[1])
+                ScopeAccess.fromAccessString(
+                    components[1]
+                )
             )
 
         }
     }
 
-    fun scopeRequestString() : String {
+    fun toScopeRequestString() : String {
         return "${this.identifier}.${this.access.toAccessString()}"
     }
 }

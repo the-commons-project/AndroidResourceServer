@@ -12,6 +12,8 @@ abstract class AuthorizationBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
         //do any checking
+
+
         //start authorization activity
     }
 

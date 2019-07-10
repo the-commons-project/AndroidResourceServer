@@ -1,4 +1,4 @@
-package com.curiosityhealth.androidresourceserver.common
+package com.curiosityhealth.androidresourceserver.common.Authorization
 
 import java.io.Serializable
 

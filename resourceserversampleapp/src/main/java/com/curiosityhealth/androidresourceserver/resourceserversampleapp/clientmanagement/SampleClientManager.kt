@@ -1,15 +1,13 @@
 package com.curiosityhealth.androidresourceserver.resourceserversampleapp.clientmanagement
 
 import android.content.Context
-import com.curiosityhealth.androidresourceserver.common.AllowedScope
-import com.curiosityhealth.androidresourceserver.common.Scope
-import com.curiosityhealth.androidresourceserver.common.ScopeAccess
+import com.curiosityhealth.androidresourceserver.common.Authorization.AllowedScope
+import com.curiosityhealth.androidresourceserver.common.Authorization.Scope
+import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeAccess
 import com.curiosityhealth.androidresourceserver.resourceserver.client.Client
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientHandshake
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientManager
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientManagerException
-import com.curiosityhealth.androidresourceserver.resourceserver.service.HandshakeService
-import com.curiosityhealth.androidresourceserver.resourceserversampleapp.service.SampleHandshakeServiceStorage
 import com.google.crypto.tink.JsonKeysetReader
 import com.google.crypto.tink.JsonKeysetWriter
 import com.google.crypto.tink.KeysetHandle
@@ -46,10 +44,22 @@ class SampleClientManager(
         //scopes should probably be defined at the local server level
         //permitted scopes on a per client basis should only refer to identifier + read/write
         val allowedScopes: Set<AllowedScope> = setOf(
-            AllowedScope(SampleScope1, ScopeAccess.READ),
-            AllowedScope(SampleScope1, ScopeAccess.WRITE),
-            AllowedScope(SampleScope2, ScopeAccess.READ),
-            AllowedScope(SampleScope3, ScopeAccess.WRITE)
+            AllowedScope(
+                SampleScope1,
+                ScopeAccess.READ
+            ),
+            AllowedScope(
+                SampleScope1,
+                ScopeAccess.WRITE
+            ),
+            AllowedScope(
+                SampleScope2,
+                ScopeAccess.READ
+            ),
+            AllowedScope(
+                SampleScope3,
+                ScopeAccess.WRITE
+            )
         )
     }
 
