@@ -64,7 +64,7 @@ class SampleClientManager(
     }
 
     val clientList = listOf<Client>(
-        Client("sample_client_id", allowedScopes)
+        Client("sample_client_id", "Sample Client App", allowedScopes)
     )
 
     private val encryptionManager: RSEncryptionManager

@@ -37,6 +37,9 @@
             </intent-filter>
         </receiver>
 
+        <activity android:name=".activity.SampleAuthorizationActivity">
+        </activity>
+
     </application>
 
 

@@ -116,8 +116,10 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
         }
 
         val state = kotlin.random.Random.nextLong()
-        this.authorizationState = state
 
+        //json serizalize parameters and encrypt them with server public key
+
+        this.authorizationState = state
 
         val request = Authorization.Request(
             this.config.clientId,
@@ -126,6 +128,14 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
             includeRefreshToken
         )
 
+        val publicEncryptionKeysetHandle = this.clientStorage.getServerPublicEncryptionKey()
+        val privateSigningKeysetHandle = this.clientStorage.getClientPrivateSigningKey()
+
+        if (publicEncryptionKeysetHandle == null || privateSigningKeysetHandle == null) {
+            completion(false, null)
+            return
+        }
+
         val receiver = Authorization.ResponseReceiver(Handler(context.mainLooper))
         receiver.callback = authorizationCallback
 
@@ -133,7 +143,9 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
             config.serverPackage,
             config.authorizationServiceClass,
             request,
-            receiver
+            receiver,
+            publicEncryptionKeysetHandle,
+            privateSigningKeysetHandle
         )
 
         context.sendBroadcast(intent)

@@ -5,5 +5,6 @@ import com.curiosityhealth.androidresourceserver.common.Authorization.AllowedSco
 //TODO: Add package, redirect, signing signature, potentially other fields
 class Client(
     val clientId: String,
+    val description: String,
     val allowedScopes: Set<AllowedScope>
 )

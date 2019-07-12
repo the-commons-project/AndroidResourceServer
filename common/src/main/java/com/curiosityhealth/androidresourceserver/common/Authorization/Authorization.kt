@@ -7,8 +7,21 @@ import android.os.Handler
 import android.os.ResultReceiver
 import com.curiosityhealth.androidresourceserver.common.Handshake
 import com.curiosityhealth.androidresourceserver.common.HandshakeException
+import com.google.crypto.tink.KeysetHandle
+import com.google.crypto.tink.hybrid.HybridDecryptFactory
+import com.google.crypto.tink.hybrid.HybridEncryptFactory
+import com.google.crypto.tink.signature.PublicKeySignFactory
+import com.google.crypto.tink.signature.PublicKeyVerifyFactory
+import com.google.crypto.tink.subtle.Random
+import com.google.gson.*
+import java.security.GeneralSecurityException
 
 class Authorization {
+
+    companion object {
+        val RESULT_CODE_OK = 200
+        val RESULT_CODE_ERROR = 400
+    }
 
     enum class Actions {
         BEGIN_AUTHORIZATION;
@@ -32,43 +45,141 @@ class Authorization {
     }
 
     enum class REQUEST_PARAMS {
-        CLIENT_ID, STATE, SCOPES, RESPONSE_RECEIVER, INCLUDE_REFRESH_TOKEN
+        CLIENT_ID, ENCRYPTED_PARAMETERS, SIGNATURE, RESPONSE_RECEIVER
+    }
+
+    enum class REQUEST_JSON_PARAMS {
+        CLIENT_ID, STATE, SCOPES, INCLUDE_REFRESH_TOKEN
     }
 
     enum class RESPONSE_PARAMS {
-        TOKEN, STATE, EXCEPTION
+        TOKEN, STATE, ENCRYPTED_PARAMETERS, EXCEPTION
     }
 
-    data class Request(
+    class Request(
         val clientId: String,
         val state: Long,
         val scopes: Set<ScopeRequest>,
         val includeRefreshToken: Boolean
     ) {
+
+        data class EncryptedParameters(
+            val clientId: String,
+            val encryptedJSON: ByteArray,
+            val signature: ByteArray
+        ) {
+
+            companion object {
+
+                @Throws(GeneralSecurityException::class)
+                fun fromIntent(
+                    intent: Intent
+                ) : EncryptedParameters? {
+                    val clientId = intent.getStringExtra(Authorization.REQUEST_PARAMS.CLIENT_ID.name) ?: return null
+
+                    val encryptedParameters = intent.getByteArrayExtra(Authorization.REQUEST_PARAMS.ENCRYPTED_PARAMETERS.name) ?: return null
+                    val signature = intent.getByteArrayExtra(Authorization.REQUEST_PARAMS.SIGNATURE.name) ?: return null
+                    return EncryptedParameters(
+                        clientId,
+                        encryptedParameters,
+                        signature
+                    )
+
+                }
+            }
+
+        }
+
         companion object {
 
-            fun fromIntent(intent: Intent) : Request? {
-                val clientId = intent.getStringExtra(Authorization.REQUEST_PARAMS.CLIENT_ID.name) ?: return null
-                val state = intent.getLongExtra(Authorization.REQUEST_PARAMS.STATE.name, 0)
-                val scopes: Set<ScopeRequest> = intent.getStringArrayListExtra(Authorization.REQUEST_PARAMS.SCOPES.name)?.let { scopeStringList ->
-                    scopeStringList.mapNotNull { ScopeRequest.fromScopeRequestString(it) }
-                }?.toSet() ?: return null
-                val includeRefreshToken = intent.getBooleanExtra(Authorization.REQUEST_PARAMS.INCLUDE_REFRESH_TOKEN.name, false)
+            fun clientIdFromIntent(intent: Intent) : String? {
+                return intent.getStringExtra(Authorization.REQUEST_PARAMS.CLIENT_ID.name)
+            }
+
+            @Throws(GeneralSecurityException::class, AuthorizationException.MalformedRequest::class)
+            fun fromEncryptedParameters(
+                encryptedParameters: EncryptedParameters,
+                privateEncryptionKeysetHandle: KeysetHandle,
+                publicSigningKeysetHandle: KeysetHandle
+            ) : Request {
+
+                //check signature
+                val verifier = PublicKeyVerifyFactory.getPrimitive(publicSigningKeysetHandle)
+                verifier.verify(encryptedParameters.signature, encryptedParameters.encryptedJSON)
+
+                //decrypt data
+                val hybridDecrypt = HybridDecryptFactory.getPrimitive(privateEncryptionKeysetHandle)
+                val contextInfo = encryptedParameters.clientId.toByteArray()
+                val decryptedBytes = hybridDecrypt.decrypt(encryptedParameters.encryptedJSON, contextInfo)
+
+                val jsonString = String(decryptedBytes)
+                val jsonObject: JsonObject = JsonParser().parse(jsonString).asJsonObject
+
+                val paramClientId: String = jsonObject.getAsJsonPrimitive(Authorization.REQUEST_JSON_PARAMS.CLIENT_ID.name).let { if (it.isString) it.asString else null } ?: throw AuthorizationException.MalformedRequest("Client ID not included in request")
+                if (encryptedParameters.clientId != paramClientId) {
+                    throw AuthorizationException.MalformedRequest("Client ID does not match")
+                }
+
+                val state: Long = jsonObject.getAsJsonPrimitive(Authorization.REQUEST_JSON_PARAMS.STATE.name).let { if (it.isNumber) it.asNumber else null }?.toLong() ?: throw AuthorizationException.MalformedRequest("State not included in request")
+
+                val scopeArray: JsonArray = jsonObject.getAsJsonArray(Authorization.REQUEST_JSON_PARAMS.SCOPES.name)
+                val convertScope: (JsonElement) -> ScopeRequest? = convertScope@{ jsonElement ->
+                    if (jsonElement.isJsonPrimitive) {
+                        val primitive = jsonElement.asJsonPrimitive
+                        if (primitive.isString) {
+                            return@convertScope ScopeRequest.fromScopeRequestString(primitive.asString)
+                        }
+                    }
+
+                    null
+                }
+                val scopes: Set<ScopeRequest> = scopeArray.asIterable().mapNotNull(convertScope).toSet()
+
+                val includeRefreshToken: Boolean = jsonObject.getAsJsonPrimitive(Authorization.REQUEST_JSON_PARAMS.INCLUDE_REFRESH_TOKEN.name).let { if (it.isBoolean) it.asBoolean else null } ?: throw AuthorizationException.MalformedRequest("includeRefreshToken not included in request")
 
                 return Request(
-                    clientId,
+                    encryptedParameters.clientId,
                     state,
                     scopes,
                     includeRefreshToken
                 )
             }
 
+            @Throws(GeneralSecurityException::class, AuthorizationException.MalformedRequest::class)
+            fun fromIntent(
+                intent: Intent,
+                privateEncryptionKeysetHandle: KeysetHandle,
+                publicSigningKeysetHandle: KeysetHandle
+            ) : Request? {
+                val clientId = intent.getStringExtra(Authorization.REQUEST_PARAMS.CLIENT_ID.name) ?: return null
+
+                val encryptedJSON = intent.getByteArrayExtra(Authorization.REQUEST_PARAMS.ENCRYPTED_PARAMETERS.name) ?: return null
+                val signature = intent.getByteArrayExtra(Authorization.REQUEST_PARAMS.SIGNATURE.name) ?: return null
+
+                val encryptedParameters = EncryptedParameters(
+                    clientId,
+                    encryptedJSON,
+                    signature
+                )
+
+                return Request.fromEncryptedParameters(
+                    encryptedParameters,
+                    privateEncryptionKeysetHandle,
+                    publicSigningKeysetHandle
+                )
+            }
+
+            @Throws(GeneralSecurityException::class)
             fun requestIntent(
                 serverPackage: String,
                 handshakeServiceClass: String,
                 request: Request,
-                responseReceiver: ResponseReceiver
+                responseReceiver: ResponseReceiver,
+                publicEncryptionKeysetHandle: KeysetHandle,
+                privateSigningKeysetHandle: KeysetHandle
             ) : Intent {
+
+
                 val intent = Intent()
 
                 intent.component = ComponentName(
@@ -78,16 +189,57 @@ class Authorization {
 
                 intent.action = Authorization.Actions.BEGIN_AUTHORIZATION.toActionString()
 
-                intent.putExtra(Authorization.REQUEST_PARAMS.CLIENT_ID.name, request.clientId)
-                intent.putExtra(Authorization.REQUEST_PARAMS.STATE.name, request.state)
-                intent.putExtra(Authorization.REQUEST_PARAMS.SCOPES.name, request.scopes.map { it.toScopeRequestString() }.toTypedArray())
-                intent.putExtra(Authorization.REQUEST_PARAMS.INCLUDE_REFRESH_TOKEN.name, request.includeRefreshToken)
+                val encryptedRequestParameters = request.getEncryptedParameters(
+                    publicEncryptionKeysetHandle,
+                    privateSigningKeysetHandle
+                )
+
+                intent.putExtra(Authorization.REQUEST_PARAMS.CLIENT_ID.name, encryptedRequestParameters.clientId)
+                intent.putExtra(Authorization.REQUEST_PARAMS.ENCRYPTED_PARAMETERS.name, encryptedRequestParameters.encryptedJSON)
+                intent.putExtra(Authorization.REQUEST_PARAMS.SIGNATURE.name, encryptedRequestParameters.signature)
 
                 intent.putExtra(Authorization.REQUEST_PARAMS.RESPONSE_RECEIVER.name, responseReceiver)
-
                 return intent
             }
+
         }
+
+        @Throws(GeneralSecurityException::class)
+        fun getEncryptedParameters(
+            publicEncryptionKeysetHandle: KeysetHandle,
+            privateSigningKeysetHandle: KeysetHandle
+        ) : EncryptedParameters {
+
+            val parameters: JsonObject = JsonObject()
+            parameters.addProperty(Authorization.REQUEST_JSON_PARAMS.CLIENT_ID.name, this.clientId)
+            parameters.addProperty(Authorization.REQUEST_JSON_PARAMS.STATE.name, this.state)
+            val scopes: JsonArray = this.scopes.map { it.toScopeRequestString() }.fold(JsonArray()) { acc, scopeRequestString ->
+                acc.add(scopeRequestString)
+                acc
+            }
+
+            parameters.add(Authorization.REQUEST_JSON_PARAMS.SCOPES.name, scopes)
+            parameters.addProperty(Authorization.REQUEST_JSON_PARAMS.INCLUDE_REFRESH_TOKEN.name, this.includeRefreshToken)
+
+            val parameterString = parameters.toString()
+            val parameterBytes: ByteArray = parameterString.toByteArray()
+
+            val hybridEncrypt = HybridEncryptFactory.getPrimitive(publicEncryptionKeysetHandle)
+            val contextInfo = this.clientId.toByteArray()
+            val encryptedJSON = hybridEncrypt.encrypt(parameterBytes, contextInfo)
+
+            val signer = PublicKeySignFactory.getPrimitive(privateSigningKeysetHandle)
+            val signature = signer.sign(encryptedJSON)
+
+            return EncryptedParameters(
+                this.clientId,
+                encryptedJSON,
+                signature
+            )
+
+        }
+
+
     }
 
 
