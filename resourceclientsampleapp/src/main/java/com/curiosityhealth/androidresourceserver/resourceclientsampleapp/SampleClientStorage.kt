@@ -97,6 +97,14 @@ class SampleClientStorage(
         this.storeKeyset("serverPublicEncryptionKey", keysetHandle)
     }
 
+    override var accessToken: String?
+        get() = this.keyValueStore.get("accessToken") as? String
+        set(value) { this.keyValueStore.set("accessToken", value) }
+
+    override var refreshToken: String?
+        get() = this.keyValueStore.get("refreshToken") as? String
+        set(value) { this.keyValueStore.set("refreshToken", value) }
+
     override fun clear() {
         this.keyValueStore.clear()
     }

@@ -44,13 +44,24 @@ class MainActivity : AppCompatActivity() {
             ScopeRequest("sample_scope_2", ScopeAccess.READ)
         )
 
-        authorizationClient.authorize(
-            this,
-            requestedScopes,
-            true
-        ) { success, exception ->
+        if (!authorizationClient.isAuthorized) {
+            authorizationClient.authorize(
+                this,
+                requestedScopes,
+                true
+            ) { success, exception ->
+
+                this.fetchData()
+
+            }
+        }
+        else {
+
+            this.fetchData()
 
         }
+
+
 
 //        val context: Context = this
 //        val callback = object : BeginHandshake.ResponseReceiver.ResponseReceiverCallBack {
@@ -65,6 +76,10 @@ class MainActivity : AppCompatActivity() {
 //        }
 //
 //        authorizationClient.beginHandshake(this, callback)
+    }
+
+    fun fetchData() {
+
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {

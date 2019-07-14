@@ -4,6 +4,7 @@ import android.content.Context
 import com.curiosityhealth.androidresourceserver.common.Authorization.AllowedScope
 import com.curiosityhealth.androidresourceserver.common.Authorization.Scope
 import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeAccess
+import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequest
 import com.curiosityhealth.androidresourceserver.resourceserver.client.Client
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientHandshake
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientManager
@@ -142,5 +143,22 @@ class SampleClientManager(
         this.storeKeyset("$clientId.clientPublicEncryptionKey", clientHandshake.clientPublicEncryptionKey)
         this.storeKeyset("$clientId.serverPrivateSigningKey", clientHandshake.serverPrivateSigningKey)
         this.storeKeyset("$clientId.serverPrivateEncryptionKey", clientHandshake.serverPrivateEncryptionKey)
+    }
+
+    override fun setApprovedScopes(clientId: String, approvedScopes: Set<ScopeRequest>) {
+        val key = "$clientId.approvedScopes"
+        val scopeArray: List<String> = approvedScopes.map { it.toScopeRequestString() }
+        this.keyValueStore.set(key, scopeArray)
+    }
+
+    override fun getApprovedScopes(clientId: String): Set<ScopeRequest>? {
+        val key = "$clientId.approvedScopes"
+        val scopeArray: List<String>? = this.keyValueStore.get(key) as? List<String>
+        return scopeArray?.map { ScopeRequest.fromScopeRequestString(it) }?.toSet()
+    }
+
+    override fun clearApprovedScopes(clientId: String) {
+        val key = "$clientId.approvedScopes"
+        this.keyValueStore.remove(key)
     }
 }

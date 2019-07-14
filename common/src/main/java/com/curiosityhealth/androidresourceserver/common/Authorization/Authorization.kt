@@ -15,6 +15,9 @@ import com.google.crypto.tink.signature.PublicKeyVerifyFactory
 import com.google.crypto.tink.subtle.Random
 import com.google.gson.*
 import java.security.GeneralSecurityException
+import android.R.attr.data
+import com.google.crypto.tink.subtle.Base64
+
 
 class Authorization {
 
@@ -49,11 +52,15 @@ class Authorization {
     }
 
     enum class REQUEST_JSON_PARAMS {
-        CLIENT_ID, STATE, SCOPES, INCLUDE_REFRESH_TOKEN
+        CLIENT_ID, STATE, SCOPES, INCLUDE_REFRESH_TOKEN, NONCE
     }
 
     enum class RESPONSE_PARAMS {
-        TOKEN, STATE, ENCRYPTED_PARAMETERS, EXCEPTION
+        ENCRYPTED_PARAMETERS, SIGNATURE, EXCEPTION
+    }
+
+    enum class RESPONSE_JSON_PARAMS {
+        ACCESS_TOKEN, REFRESH_TOKEN, STATE, NONCE
     }
 
     class Request(
@@ -220,6 +227,8 @@ class Authorization {
 
             parameters.add(Authorization.REQUEST_JSON_PARAMS.SCOPES.name, scopes)
             parameters.addProperty(Authorization.REQUEST_JSON_PARAMS.INCLUDE_REFRESH_TOKEN.name, this.includeRefreshToken)
+            val nonce = Base64.encodeToString(Random.randBytes(64), Base64.DEFAULT)
+            parameters.addProperty(Authorization.REQUEST_JSON_PARAMS.NONCE.name, nonce)
 
             val parameterString = parameters.toString()
             val parameterBytes: ByteArray = parameterString.toByteArray()
@@ -245,38 +254,177 @@ class Authorization {
 
 
     data class Response(
-        val token: String,
+        val accessToken: String,
+        val refreshtoken: String,
         val state: Long
     ) {
 
-        companion object {
-            fun responseFromBundle(bundle: Bundle) : Response? {
+        class ResponsePartial(val encryptedParameters: EncryptedParameters) {
 
-                val token = bundle.getString(Authorization.RESPONSE_PARAMS.TOKEN.name) ?: return null
-                val state = bundle.getLong(Authorization.RESPONSE_PARAMS.STATE.name)
+            fun response(
+                clientId: String,
+                privateEncryptionKeysetHandle: KeysetHandle,
+                publicSigningKeysetHandle: KeysetHandle
+            ) : Response {
+                return Response.fromEncryptedParameters(
+                    clientId,
+                    this.encryptedParameters,
+                    privateEncryptionKeysetHandle,
+                    publicSigningKeysetHandle
+                )
+            }
+
+        }
+
+        data class EncryptedParameters(
+            val encryptedJSON: ByteArray,
+            val signature: ByteArray
+        ) {
+
+            companion object {
+
+                @Throws(GeneralSecurityException::class)
+                fun fromBundle(
+                    bundle: Bundle
+                ) : EncryptedParameters? {
+                    val encryptedParameters = bundle.getByteArray(Authorization.RESPONSE_PARAMS.ENCRYPTED_PARAMETERS.name) ?: return null
+                    val signature = bundle.getByteArray(Authorization.REQUEST_PARAMS.SIGNATURE.name) ?: return null
+                    return EncryptedParameters(
+                        encryptedParameters,
+                        signature
+                    )
+
+                }
+            }
+
+        }
+
+        companion object {
+
+            fun responsePartialFromBundle(
+                bundle: Bundle
+            ) : ResponsePartial? {
+                val encryptedJSON = bundle.getByteArray(Authorization.RESPONSE_PARAMS.ENCRYPTED_PARAMETERS.name) ?: return null
+                val signature = bundle.getByteArray(Authorization.RESPONSE_PARAMS.SIGNATURE.name) ?: return null
+
+                val encryptedParameters = Response.EncryptedParameters(
+                    encryptedJSON,
+                    signature
+                )
+
+                return ResponsePartial(encryptedParameters)
+            }
+
+//            fun responseFromBundle(
+//                bundle: Bundle,
+//                clientId: String,
+//                privateEncryptionKeysetHandle: KeysetHandle,
+//                publicSigningKeysetHandle: KeysetHandle
+//            ) : Response? {
+//
+//                val encryptedJSON = bundle.getByteArray(Authorization.RESPONSE_PARAMS.ENCRYPTED_PARAMETERS.name) ?: return null
+//                val signature = bundle.getByteArray(Authorization.RESPONSE_PARAMS.SIGNATURE.name) ?: return null
+//
+//                val encryptedParameters = Response.EncryptedParameters(
+//                    encryptedJSON,
+//                    signature
+//                )
+//
+//                return Response.fromEncryptedParameters(
+//                    clientId,
+//                    encryptedParameters,
+//                    privateEncryptionKeysetHandle,
+//                    publicSigningKeysetHandle
+//                )
+//            }
+
+            @Throws(GeneralSecurityException::class, AuthorizationException.MalformedRequest::class)
+            fun fromEncryptedParameters(
+                clientId: String,
+                encryptedParameters: Response.EncryptedParameters,
+                privateEncryptionKeysetHandle: KeysetHandle,
+                publicSigningKeysetHandle: KeysetHandle
+            ) : Response {
+
+                //check signature
+                val verifier = PublicKeyVerifyFactory.getPrimitive(publicSigningKeysetHandle)
+                verifier.verify(encryptedParameters.signature, encryptedParameters.encryptedJSON)
+
+                //decrypt data
+                val hybridDecrypt = HybridDecryptFactory.getPrimitive(privateEncryptionKeysetHandle)
+                val contextInfo = clientId.toByteArray()
+                val decryptedBytes = hybridDecrypt.decrypt(encryptedParameters.encryptedJSON, contextInfo)
+
+                val jsonString = String(decryptedBytes)
+                val jsonObject: JsonObject = JsonParser().parse(jsonString).asJsonObject
+
+                val accessToken: String = jsonObject.getAsJsonPrimitive(Authorization.RESPONSE_JSON_PARAMS.ACCESS_TOKEN.name).let { if (it.isString) it.asString else null } ?: throw AuthorizationException.MalformedResponse("Access Token not included in response")
+                val refreshToken: String = jsonObject.getAsJsonPrimitive(Authorization.RESPONSE_JSON_PARAMS.REFRESH_TOKEN.name).let { if (it.isString) it.asString else null } ?: throw AuthorizationException.MalformedResponse("Refresh Token not included in response")
+                val state: Long = jsonObject.getAsJsonPrimitive(Authorization.RESPONSE_JSON_PARAMS.STATE.name).let { if (it.isNumber) it.asNumber else null }?.toLong() ?: throw AuthorizationException.MalformedRequest("State not included in request")
 
                 return Response(
-                    token,
+                    accessToken,
+                    refreshToken,
                     state
                 )
             }
         }
 
-        fun toBundle() : Bundle {
+        fun toBundle(
+            clientId: String,
+            publicEncryptionKeysetHandle: KeysetHandle,
+            privateSigningKeysetHandle: KeysetHandle
+        ) : Bundle {
             val bundle = Bundle()
-            bundle.putString(Authorization.RESPONSE_PARAMS.TOKEN.name, this.token)
-            bundle.putLong(Authorization.RESPONSE_PARAMS.STATE.name, this.state)
+
+            val encryptedRequestParameters = this.getEncryptedParameters(
+                clientId,
+                publicEncryptionKeysetHandle,
+                privateSigningKeysetHandle
+            )
+
+            bundle.putByteArray(Authorization.RESPONSE_PARAMS.ENCRYPTED_PARAMETERS.name, encryptedRequestParameters.encryptedJSON)
+            bundle.putByteArray(Authorization.RESPONSE_PARAMS.SIGNATURE.name, encryptedRequestParameters.signature)
 
             return bundle
         }
+
+        @Throws(GeneralSecurityException::class)
+        fun getEncryptedParameters(
+            clientId: String,
+            publicEncryptionKeysetHandle: KeysetHandle,
+            privateSigningKeysetHandle: KeysetHandle
+        ) : Response.EncryptedParameters {
+
+            val parameters: JsonObject = JsonObject()
+            parameters.addProperty(Authorization.RESPONSE_JSON_PARAMS.ACCESS_TOKEN.name, this.accessToken)
+            parameters.addProperty(Authorization.RESPONSE_JSON_PARAMS.REFRESH_TOKEN.name, this.refreshtoken)
+            parameters.addProperty(Authorization.RESPONSE_JSON_PARAMS.STATE.name, this.state)
+            val nonce = Base64.encodeToString(Random.randBytes(64), Base64.DEFAULT)
+            parameters.addProperty(Authorization.RESPONSE_JSON_PARAMS.NONCE.name, nonce)
+
+            val parameterString = parameters.toString()
+            val parameterBytes: ByteArray = parameterString.toByteArray()
+
+            val hybridEncrypt = HybridEncryptFactory.getPrimitive(publicEncryptionKeysetHandle)
+            val contextInfo = clientId.toByteArray()
+            val encryptedJSON = hybridEncrypt.encrypt(parameterBytes, contextInfo)
+
+            val signer = PublicKeySignFactory.getPrimitive(privateSigningKeysetHandle)
+            val signature = signer.sign(encryptedJSON)
+
+            return Response.EncryptedParameters(
+                encryptedJSON,
+                signature
+            )
+
+        }
     }
-
-
 
     class ResponseReceiver(handler: Handler) : ResultReceiver(handler) {
 
         interface ResponseReceiverCallBack {
-            fun onSuccess(response: Response)
+            fun onSuccess(responsePartial: Response.ResponsePartial)
             fun onError(exception: Exception)
         }
 
@@ -286,18 +434,18 @@ class Authorization {
             val cb: ResponseReceiverCallBack? = this.callback
 
             if (cb != null) {
-                if (resultCode == Handshake.RESULT_CODE_OK) {
+                if (resultCode == RESULT_CODE_OK) {
 
-                    val response = Response.responseFromBundle(resultData)
-                    if (response != null) {
-                        cb.onSuccess(response)
+                    val responsePartial = Response.responsePartialFromBundle(resultData)
+                    if (responsePartial != null) {
+                        cb.onSuccess(responsePartial)
                     }
                     else {
                         cb.onError(HandshakeException.MalformedResponse("malformed response"))
                     }
 
                 } else {
-                    val exception: Exception? = resultData.getSerializable(Handshake.RESPONSE_PARAMS.EXCEPTION.name) as? Exception
+                    val exception: Exception? = resultData.getSerializable(Authorization.RESPONSE_PARAMS.EXCEPTION.name) as? Exception
                     if (exception != null) {
                         cb.onError(exception)
                     }

@@ -3,6 +3,7 @@ package com.curiosityhealth.androidresourceserver.resourceserver.activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
 import android.os.ResultReceiver
 import android.view.LayoutInflater
 import android.view.View
@@ -10,6 +11,10 @@ import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import com.curiosityhealth.androidresourceserver.common.Authorization.*
+import com.curiosityhealth.androidresourceserver.common.CompleteHandshake
+import com.curiosityhealth.androidresourceserver.common.Handshake
+import com.curiosityhealth.androidresourceserver.common.HandshakeException
+import com.curiosityhealth.androidresourceserver.common.VerifyHandshake
 import com.curiosityhealth.androidresourceserver.resourceserver.R
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientManager
 
@@ -17,7 +22,91 @@ abstract class AuthorizationActivity : AppCompatActivity() {
 
     abstract val clientManager: ClientManager
 
+    data class Response(
+        val clientId: String,
+        val state: Long,
+        val approvedScopes: Set<ScopeRequest>
+    ) {
+        companion object {
+
+            enum class RESPONSE_PARAMS {
+                CLIENT_ID, STATE, SCOPES
+            }
+
+            fun responseFromBundle(bundle: Bundle) : Response? {
+
+                val clientId = bundle.getString(RESPONSE_PARAMS.CLIENT_ID.name) ?: return null
+                val state = bundle.getLong(RESPONSE_PARAMS.STATE.name)
+                val scopeArray: Array<String> = bundle.getStringArray(RESPONSE_PARAMS.SCOPES.name) ?: return null
+                val requestedScopes: Set<ScopeRequest> = scopeArray.map { ScopeRequest.fromScopeRequestString(it) }.toSet()
+
+                return Response(
+                    clientId,
+                    state,
+                    requestedScopes
+                )
+            }
+        }
+
+        fun toBundle() : Bundle {
+            val bundle = Bundle()
+            bundle.putString(Handshake.RESPONSE_PARAMS.CLIENT_ID.name, this.clientId)
+            bundle.putLong(Handshake.RESPONSE_PARAMS.STATE.name, this.state)
+            val scopeArray: Array<String> = this.approvedScopes.map { it.toScopeRequestString() }.toTypedArray()
+            bundle.putStringArray(RESPONSE_PARAMS.SCOPES.name, scopeArray)
+            return bundle
+        }
+
+
+    }
+
+    class ResponseReceiver(handler: Handler) : ResultReceiver(handler) {
+
+        interface ResponseReceiverCallBack {
+            fun onConsented(response: Response)
+            fun onCanceled()
+            fun onError(exception: Exception)
+        }
+
+        var callback: ResponseReceiverCallBack? = null
+        override fun onReceiveResult(resultCode: Int, resultData: Bundle) {
+
+            val cb: ResponseReceiverCallBack? = this.callback
+
+            if (cb != null) {
+                if (resultCode == RESULT_CODE_CONSENTED) {
+
+                    val response = Response.responseFromBundle(resultData)
+                    if (response != null) {
+                        cb.onConsented(response)
+                    }
+                    else {
+                        cb.onError(HandshakeException.MalformedResponse("malformed response"))
+                    }
+
+                }
+                else if (resultCode == RESULT_CODE_CANCELED) {
+                    cb.onCanceled()
+                }
+                else {
+                    val exception: Exception? = resultData.getSerializable(Authorization.RESPONSE_PARAMS.EXCEPTION.name) as? Exception
+                    if (exception != null) {
+                        cb.onError(exception)
+                    }
+                    else {
+                        cb.onError(HandshakeException.MalformedResponse("malformed response"))
+                    }
+                }
+            }
+        }
+
+    }
+
     companion object {
+
+        val RESULT_CODE_CONSENTED = 200
+        val RESULT_CODE_CANCELED = 300
+        val RESULT_CODE_ERROR = 400
 
         enum class REQUEST_PARAMS {
             CLIENT_ID, STATE, SCOPES, INCLUDE_REFRESH_TOKEN, RESPONSE_RECEIVER
@@ -27,7 +116,7 @@ abstract class AuthorizationActivity : AppCompatActivity() {
             context: Context,
             cls: Class<AuthorizationActivityClass>,
             request: Authorization.Request,
-            resultReceiver: ResultReceiver
+            resultReceiver: ResponseReceiver
         ) : Intent {
             val intent = Intent(context, cls)
 
@@ -47,29 +136,70 @@ abstract class AuthorizationActivity : AppCompatActivity() {
         setContentView(R.layout.activity_authorization)
 
         val clientId: String = this.intent.getStringExtra(REQUEST_PARAMS.CLIENT_ID.name)
+        val state: Long = this.intent.getLongExtra(REQUEST_PARAMS.STATE.name, -1)
         val scopeArray: Array<String> = this.intent.getStringArrayExtra(REQUEST_PARAMS.SCOPES.name)
-        val requestedScopes: Set<ScopeRequest> = scopeArray.mapNotNull { ScopeRequest.fromScopeRequestString(it) }.toSet()
+        val requestedScopes: Set<ScopeRequest> = scopeArray.map { ScopeRequest.fromScopeRequestString(it) }.toSet()
         val includeRefreshToken: Boolean = this.intent.getBooleanExtra(REQUEST_PARAMS.INCLUDE_REFRESH_TOKEN.name, true)
+
+        val responseReceiver: ResultReceiver = this.intent.getParcelableExtra(REQUEST_PARAMS.RESPONSE_RECEIVER.name)
+
+        val context = this
+        val listView = findViewById<ListView>(R.id.activity_authorization_scope_choice_list_view)
 
         val cancelButton = findViewById<Button>(R.id.activity_authorization_cancel_button)
         cancelButton.setOnClickListener {
-
+            val code = RESULT_CODE_CANCELED
+            val bundle = Bundle()
+            responseReceiver.send(code, bundle)
+            finish()
         }
 
         val confirmButton = findViewById<Button>(R.id.activity_authorization_confirm_button)
         confirmButton.setOnClickListener {
 
+            val adaptor = (listView.adapter as? AuthorizationScopeRequestListViewAdaptor)
+            if (adaptor == null) {
+                val code = Authorization.RESULT_CODE_ERROR
+                val bundle = Bundle()
+                val error = AuthorizationException.AuthorizationFailed("An error occurred")
+                bundle.putSerializable(Authorization.RESPONSE_PARAMS.EXCEPTION.name, error)
+                responseReceiver.send(code, bundle)
+            }
+            else {
+                val approvedScopes: Set<ScopeRequest> = adaptor.approvedScopes.map { it.toScopeRequest() }.toSet()
+                //send approved scopes back to the authorization broadcast receiver
+                //broadcast receiver will send response back to the original requester
+
+                val response = Response(
+                    clientId,
+                    state,
+                    approvedScopes
+                )
+
+                val bundle = response.toBundle()
+                responseReceiver.send(Handshake.RESULT_CODE_OK, bundle)
+                finish()
+            }
+
         }
 
-        val context = this
-        val listView = findViewById<ListView>(R.id.activity_authorization_scope_choice_list_view)
-
         //fetch client
-        clientManager.client(clientId) { clientOpt, exception ->
+        clientManager.client(clientId) { client, exception ->
 
-            clientOpt?.let { client ->
-                //filter allowed scopes by requested scopes
-
+            if (exception != null) {
+                val code = RESULT_CODE_ERROR
+                val bundle = Bundle()
+                bundle.putSerializable(Authorization.RESPONSE_PARAMS.EXCEPTION.name, exception)
+                responseReceiver.send(code, bundle)
+            }
+            else if (client == null) {
+                val code = RESULT_CODE_ERROR
+                val bundle = Bundle()
+                val error = AuthorizationException.UnknownClient(clientId)
+                bundle.putSerializable(Authorization.RESPONSE_PARAMS.EXCEPTION.name, error)
+                responseReceiver.send(code, bundle)
+            }
+            else {
                 val scopes: Set<AllowedScope> = client.allowedScopes.filter { requestedScopes.contains(it.toScopeRequest()) }.toSet()
                 val readScopes: List<AllowedScope> = scopes
                     .filter { it.access == ScopeAccess.READ }
@@ -98,14 +228,7 @@ abstract class AuthorizationActivity : AppCompatActivity() {
                 listView.adapter = adaptor
             }
 
-
-
         }
-
-
-
-
-
 
     }
 
@@ -135,6 +258,13 @@ class AuthorizationScopeRequestListViewAdaptor(
     val writeCellHeaderIndex: Int?
         get() = if (hasWriteCells) readCellCount else null
 
+    private var approvedReadScopeMap: Map<AllowedScope, Boolean> = readScopes.map { Pair(it, false) }.toMap()
+    private var approvedWriteScopeMap: Map<AllowedScope, Boolean> = writeScopes.map { Pair(it, false) }.toMap()
+
+    val approvedScopes: Set<AllowedScope>
+        get() = approvedReadScopeMap.filter { it.value }.keys +
+                approvedWriteScopeMap.filter { it.value }.keys
+
     override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
 
         val item = getItem(position)
@@ -150,6 +280,16 @@ class AuthorizationScopeRequestListViewAdaptor(
                 val scopeChoiceView = convertView ?: LayoutInflater.from(parent!!.context).inflate(R.layout.list_item_authorization_scope_choice, parent, false)
                 val switch = scopeChoiceView.findViewById<Switch>(R.id.list_item_authorization_scope_choice_switch_view)
                 switch.text = item.scope.description
+
+                switch.setOnCheckedChangeListener { buttonView, isChecked ->
+                    if (item.access == ScopeAccess.READ) {
+                        approvedReadScopeMap = approvedReadScopeMap.plus(Pair(item, isChecked))
+                    }
+                    else {
+                        approvedWriteScopeMap = approvedWriteScopeMap.plus(Pair(item, isChecked))
+                    }
+                }
+
                 return scopeChoiceView
             }
             else -> {
@@ -190,4 +330,5 @@ class AuthorizationScopeRequestListViewAdaptor(
     override fun getCount(): Int {
         return readCellCount + writeCellCount
     }
+
 }

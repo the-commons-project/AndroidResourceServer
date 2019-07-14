@@ -46,6 +46,9 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
         @Throws(GeneralSecurityException::class)
         fun storeServerPublicEncryptionKey(keysetHandle: KeysetHandle)
 
+        var accessToken: String?
+        var refreshToken: String?
+
         fun clear()
     }
 
@@ -60,6 +63,14 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
 
     //authorization
     private var authorizationState: Long = -1
+
+    val isAuthorized: Boolean
+        get() = {
+            val accessToken = this.clientStorage.accessToken
+            val refreshToken = this.clientStorage.refreshToken
+            val authorized = (accessToken != null && refreshToken != null)
+            authorized
+        }()
 
     fun authorize(
         context: Context,
@@ -103,15 +114,32 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
         includeRefreshToken: Boolean,
         completion: (successful: Boolean, exception: Exception?) -> Unit
     ) {
-        completion(true, null)
 
         val authorizationCallback = object : Authorization.ResponseReceiver.ResponseReceiverCallBack {
-            override fun onSuccess(response: Authorization.Response) {
-                TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
+            override fun onSuccess(responsePartial: Authorization.Response.ResponsePartial) {
+
+                val privateEncryptionKeysetHandle = clientStorage.getClientPrivateEncryptionKey()
+                val publicSigningKeysetHandle = clientStorage.getServerPublicSigningKey()
+
+                if (privateEncryptionKeysetHandle == null || publicSigningKeysetHandle == null) {
+                    completion(false, null)
+                    return
+                }
+
+                val response = responsePartial.response(
+                    config.clientId,
+                    privateEncryptionKeysetHandle,
+                    publicSigningKeysetHandle
+                )
+
+                clientStorage.accessToken = response.accessToken
+                clientStorage.refreshToken = response.refreshtoken
+
+                completion(true, null)
             }
 
             override fun onError(exception: Exception) {
-                TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
+                completion(false, exception)
             }
         }
 
