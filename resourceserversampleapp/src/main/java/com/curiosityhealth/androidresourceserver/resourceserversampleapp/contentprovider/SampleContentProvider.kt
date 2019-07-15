@@ -14,6 +14,7 @@ import com.curiosityhealth.androidresourceserver.common.authorization.ScopeAcces
 import com.curiosityhealth.androidresourceserver.common.authorization.ScopeRequest
 import com.curiosityhealth.androidresourceserver.common.content.ContentResponse
 import com.curiosityhealth.androidresourceserver.common.content.SampleContentResponseItem1
+import com.curiosityhealth.androidresourceserver.common.content.SampleContentResponseItem2
 import com.curiosityhealth.androidresourceserver.resourceserversampleapp.clientmanagement.SampleClientManager
 import com.curiosityhealth.androidresourceserver.resourceserversampleapp.token.SampleTokenManager
 import com.google.crypto.tink.hybrid.HybridDecryptFactory
@@ -28,7 +29,7 @@ abstract class ContentRequestHandler(val authority: String) {
     abstract fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?) : ContentResponse?
 }
 
-class SampleContentRequestHandler(authority: String, path: String) : ContentRequestHandler(authority) {
+class SampleContentRequestHandler1(authority: String, path: String) : ContentRequestHandler(authority) {
 
     companion object {
         val SAMPLE_DATA_1 = 1
@@ -65,6 +66,43 @@ class SampleContentRequestHandler(authority: String, path: String) : ContentRequ
     }
 }
 
+class SampleContentRequestHandler2(authority: String, path: String) : ContentRequestHandler(authority) {
+
+    companion object {
+        val SAMPLE_DATA_2 = 2
+    }
+
+    val matcher: UriMatcher = {
+        val matcher = UriMatcher(UriMatcher.NO_MATCH)
+        matcher.addURI(authority, path, SAMPLE_DATA_2)
+        matcher
+    }()
+
+    val requiredScope: ScopeRequest = ScopeRequest("sample_scope_2", ScopeAccess.READ)
+
+    override fun matches(uri: Uri): Boolean {
+        val match = matcher.match(uri)
+        return match == SAMPLE_DATA_2
+    }
+
+    override fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?): ContentResponse? {
+        val approvedScopes = SampleClientManager.shared.getApprovedScopes(clientId) ?: return ContentResponse(emptyList())
+        if (!approvedScopes.contains(requiredScope)) {
+            return ContentResponse(emptyList())
+        }
+
+        val items: List<SampleContentResponseItem2> = listOf(
+            SampleContentResponseItem2("item 1", 1),
+            SampleContentResponseItem2("item 2", 2)
+        )
+
+        val moshi = Moshi.Builder().build()
+        val jsonAdapter = moshi.adapter(SampleContentResponseItem2::class.java)
+
+        return ContentResponse(items.map { jsonAdapter.toJson(it) })
+    }
+}
+
 class SampleContentProvider : ContentProvider() {
 
     companion object {
@@ -79,7 +117,8 @@ class SampleContentProvider : ContentProvider() {
     override fun onCreate(): Boolean {
 
         val contentRequestHandlers: List<ContentRequestHandler> = listOf(
-            SampleContentRequestHandler(authority, "sample_data_1")
+            SampleContentRequestHandler1(authority, "sample_data_1"),
+            SampleContentRequestHandler2(authority, "sample_data_2")
         )
         this.contentRequestHandlers = contentRequestHandlers
 

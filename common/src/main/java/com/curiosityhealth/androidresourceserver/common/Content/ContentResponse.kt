@@ -8,7 +8,7 @@ data class SampleContentResponseItem1(val identifier: String, val sampleString: 
 }
 
 @JsonClass(generateAdapter = true)
-data class SampleContentResponseItem2(val identifier: String, val sampleInt: String) {
+data class SampleContentResponseItem2(val identifier: String, val sampleInt: Int) {
 
 }
 
