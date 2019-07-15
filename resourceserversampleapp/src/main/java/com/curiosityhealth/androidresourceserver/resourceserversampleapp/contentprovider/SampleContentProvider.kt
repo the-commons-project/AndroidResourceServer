@@ -6,6 +6,7 @@ import android.content.UriMatcher
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
+import android.os.AsyncTask
 import android.util.Base64
 import android.util.Log
 import com.auth0.jwt.interfaces.DecodedJWT
@@ -23,10 +24,15 @@ import com.google.crypto.tink.signature.PublicKeySignFactory
 import com.google.crypto.tink.signature.PublicKeyVerifyFactory
 import com.google.crypto.tink.subtle.Random
 import com.squareup.moshi.Moshi
+import io.reactivex.Observable
+import io.reactivex.Single
+import java.lang.Exception
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.FutureTask
 
 abstract class ContentRequestHandler(val authority: String) {
     abstract fun matches(path: Uri) : Boolean
-    abstract fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?) : ContentResponse?
+    abstract fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?, completion: (ContentResponse?, Exception?) -> Unit)
 }
 
 class SampleContentRequestHandler1(authority: String, path: String) : ContentRequestHandler(authority) {
@@ -48,10 +54,12 @@ class SampleContentRequestHandler1(authority: String, path: String) : ContentReq
         return match == SAMPLE_DATA_1
     }
 
-    override fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?): ContentResponse? {
-        val approvedScopes = SampleClientManager.shared.getApprovedScopes(clientId) ?: return ContentResponse(emptyList())
-        if (!approvedScopes.contains(requiredScope)) {
-            return ContentResponse(emptyList())
+    override fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?, completion: (ContentResponse?, Exception?) -> Unit) {
+        //permission checking
+        val approvedScopes = SampleClientManager.shared.getApprovedScopes(clientId)
+        if (approvedScopes == null || !approvedScopes.contains(requiredScope)) {
+            completion(ContentResponse(emptyList()), null)
+            return
         }
 
         val items: List<SampleContentResponseItem1> = listOf(
@@ -62,7 +70,8 @@ class SampleContentRequestHandler1(authority: String, path: String) : ContentReq
         val moshi = Moshi.Builder().build()
         val jsonAdapter = moshi.adapter(SampleContentResponseItem1::class.java)
 
-        return ContentResponse(items.map { jsonAdapter.toJson(it) })
+        completion(ContentResponse(items.map { jsonAdapter.toJson(it) }), null)
+        return
     }
 }
 
@@ -85,10 +94,12 @@ class SampleContentRequestHandler2(authority: String, path: String) : ContentReq
         return match == SAMPLE_DATA_2
     }
 
-    override fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?): ContentResponse? {
-        val approvedScopes = SampleClientManager.shared.getApprovedScopes(clientId) ?: return ContentResponse(emptyList())
-        if (!approvedScopes.contains(requiredScope)) {
-            return ContentResponse(emptyList())
+    override fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?, completion: (ContentResponse?, Exception?) -> Unit) {
+        //permission checking
+        val approvedScopes = SampleClientManager.shared.getApprovedScopes(clientId)
+        if (approvedScopes == null || !approvedScopes.contains(requiredScope)) {
+            completion(ContentResponse(emptyList()), null)
+            return
         }
 
         val items: List<SampleContentResponseItem2> = listOf(
@@ -99,7 +110,8 @@ class SampleContentRequestHandler2(authority: String, path: String) : ContentReq
         val moshi = Moshi.Builder().build()
         val jsonAdapter = moshi.adapter(SampleContentResponseItem2::class.java)
 
-        return ContentResponse(items.map { jsonAdapter.toJson(it) })
+        completion(ContentResponse(items.map { jsonAdapter.toJson(it) }), null)
+        return
     }
 }
 
@@ -183,6 +195,61 @@ class SampleContentProvider : ContentProvider() {
         return mc
     }
 
+//    fun handleRequest(contentRequestHandler: ContentRequestHandler, uri: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?) : ContentResponse? {
+//        return contentRequestHandler.handleContentRequest(uri, clientId, token, parameters)
+//    }
+
+    class ContentRequestHandlerTask(
+        val contentRequestHandler: ContentRequestHandler,
+        val uri: Uri,
+        val clientId: String,
+        val token: DecodedJWT?,
+        val parameters: Map<String, Any>?
+    ) : AsyncTask<Void, Void, ContentResponse?>() {
+
+        override fun doInBackground(vararg params: Void?): ContentResponse? {
+
+//            val contentResponse: ContentResponse? = Observable.create<ContentResponse?> { emitter ->
+//                contentRequestHandler.handleContentRequest(uri, clientId, token, parameters) { contentResponse, exception ->
+//                    if (contentResponse != null) {
+//                        emitter.onSuccess(contentResponse)
+//                    }
+//                    else if (exception != null) {
+//                        emitter.onError(exception)
+//                    }
+//                    else {
+//                        emitter.onComplete()
+//                    }
+//
+//                }
+//            }.blockingSingle()
+
+            val contentResponse: ContentResponse? = Single.create<ContentResponse?> { emitter ->
+                contentRequestHandler.handleContentRequest(uri, clientId, token, parameters) { contentResponse, exception ->
+                    if (contentResponse != null) {
+                        emitter.onSuccess(contentResponse)
+                    }
+                    else {
+                        emitter.onError(exception!!)
+                    }
+                }
+            }.blockingGet()
+
+            return contentResponse
+        }
+    }
+
+    fun handleRequestAsync(contentRequestHandler: ContentRequestHandler, uri: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?) : ContentResponse? {
+
+        return ContentRequestHandlerTask(
+            contentRequestHandler,
+            uri,
+            clientId,
+            token,
+            parameters
+        ).execute().get()
+    }
+
     override fun query(
         uri: Uri,
         projection: Array<String>?,
@@ -194,12 +261,12 @@ class SampleContentProvider : ContentProvider() {
         val clientId = uri.getQueryParameter("client_id") ?: return null
 
         //TODO: this throws if it cant find a match
-        val requestHandler: ContentRequestHandler? = this.contentRequestHandlers.first { handler ->
+        val requestHandler: ContentRequestHandler = this.contentRequestHandlers.first { handler ->
             handler.matches(uri)
         }
 
         val token = getToken(uri, clientId)
-        val response = requestHandler?.handleContentRequest(uri, clientId, token, null) ?: return null
+        val response = handleRequestAsync(requestHandler, uri, clientId, token, null) ?: return null
         return generateCursor(clientId, response)
     }
 
