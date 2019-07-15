@@ -3,6 +3,7 @@
           package="com.curiosityhealth.androidresourceserver.resourceserversampleapp">
 
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <permission android:name="com.curiosityhealth.androidresourceserver.resourceserversampleapp.samplecontentprovider.READ"/>
 
     <application
             android:allowBackup="true"
@@ -39,6 +40,12 @@
 
         <activity android:name=".activity.SampleAuthorizationActivity">
         </activity>
+
+        <provider
+                android:name=".contentprovider.SampleContentProvider"
+                android:authorities="com.curiosityhealth.androidresourceserver.resourceserversampleapp.samplecontentprovider"
+                android:exported="true"
+                android:permission="com.curiosityhealth.androidresourceserver.resourceserversampleapp.samplecontentprovider.READ"/>
 
     </application>
 

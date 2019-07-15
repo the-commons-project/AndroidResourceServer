@@ -37,6 +37,7 @@ dependencies {
     implementation project(":resourceclient")
 
     implementation "com.google.crypto.tink:tink-android:$tink_version"
+    implementation "com.google.code.gson:gson:2.8.5"
 
     implementation "org.researchsuite:researchsuiteextensions-common:$researchsuiteextensions_version"
     implementation "org.researchsuite:researchsuiteextensions-encryption:$researchsuiteextensions_version"

@@ -3,8 +3,10 @@ package com.curiosityhealth.androidresourceserver.resourceclient
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
+import android.util.Base64
 import androidx.core.app.JobIntentService
 import com.curiosityhealth.androidresourceserver.common.*
 import com.curiosityhealth.androidresourceserver.common.Authorization.Authorization
@@ -71,6 +73,64 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
             val authorized = (accessToken != null && refreshToken != null)
             authorized
         }()
+
+    public data class EncryptedData(val encryptedData: ByteArray, val signature: ByteArray, val contextInfo: ByteArray) {
+
+    }
+
+    fun encryptData(data: ByteArray, contextInfo: ByteArray) : EncryptedData? {
+        val privateSigningKey = this.clientStorage.getClientPrivateSigningKey() ?: return null
+        val publicEncryptionKey = this.clientStorage.getServerPublicEncryptionKey() ?: return null
+
+        val hybridEncrypt = HybridEncryptFactory.getPrimitive(publicEncryptionKey)
+        val encryptedData = hybridEncrypt.encrypt(data, contextInfo)
+
+        val signer = PublicKeySignFactory.getPrimitive(privateSigningKey)
+        val signature = signer.sign(encryptedData)
+
+        return EncryptedData(
+            encryptedData,
+            signature,
+            contextInfo
+        )
+    }
+
+    fun decryptData(encryptedData: EncryptedData) : ByteArray? {
+
+        val publicSigningKeysetHandle = this.clientStorage.getServerPublicSigningKey() ?: return null
+        val privateEncryptionKeysetHandle = this.clientStorage.getClientPrivateEncryptionKey() ?: return null
+
+        //check signature
+        val verifier = PublicKeyVerifyFactory.getPrimitive(publicSigningKeysetHandle)
+        verifier.verify(encryptedData.signature, encryptedData.encryptedData)
+
+        //decrypt data
+        val hybridDecrypt = HybridDecryptFactory.getPrimitive(privateEncryptionKeysetHandle)
+        return hybridDecrypt.decrypt(encryptedData.encryptedData, encryptedData.contextInfo)
+    }
+
+    fun uriAppendingClientId(uri: Uri) : Uri? {
+        return uri.buildUpon()
+            .appendQueryParameter("client_id", this.config.clientId)
+            .build()
+    }
+
+    fun uriAppendingAccessToken(uri: Uri) : Uri? {
+
+        //we may want to store this encrypted and signature
+        val token = this.clientStorage.accessToken ?: return null
+        val data = token.toByteArray()
+        val contextInfo = this.config.clientId.toByteArray()
+
+        val encryptedData = encryptData(data, contextInfo) ?: return null
+        val base64EncodedSignature = Base64.encodeToString(encryptedData.signature, Base64.DEFAULT)
+        val base64EncodedToken = Base64.encodeToString(encryptedData.encryptedData, Base64.DEFAULT)
+
+        return uri.buildUpon()
+            .appendQueryParameter("token", base64EncodedToken)
+            .appendQueryParameter("token_signature", base64EncodedSignature)
+            .build()
+    }
 
     fun authorize(
         context: Context,
@@ -179,7 +239,7 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
         context.sendBroadcast(intent)
     }
 
-    private fun checkHandshake(completion: (successful: Boolean, exception: Exception?) -> Unit) {
+    fun checkHandshake(completion: (successful: Boolean, exception: Exception?) -> Unit) {
 
         //potentially verify handshake here
         val verifyHandshakeCallback = object : VerifyHandshake.ResponseReceiver.ResponseReceiverCallBack {
