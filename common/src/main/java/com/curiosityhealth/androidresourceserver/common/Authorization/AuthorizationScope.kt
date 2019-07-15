@@ -1,5 +1,8 @@
-package com.curiosityhealth.androidresourceserver.common.Authorization
+package com.curiosityhealth.androidresourceserver.common.authorization
 
+import com.squareup.moshi.JsonClass
+
+@JsonClass(generateAdapter = true)
 open class Scope(
     val identifier: String,
     val description: String
@@ -17,25 +20,26 @@ class ScopeRequestException(s: String) : Exception(s)
 enum class ScopeAccess {
     READ, WRITE;
 
-    companion object {
-        @Throws(ScopeAccessException::class)
-        fun fromAccessString(accessString: String) : ScopeAccess {
-            return when (accessString) {
-                "read" -> READ
-                "write" -> WRITE
-                else -> throw ScopeAccessException("Invalid access: $accessString")
-            }
-        }
-    }
-
-    fun toAccessString() : String {
-        return when (this) {
-            READ -> "read"
-            WRITE -> "write"
-        }
-    }
+//    companion object {
+//        @Throws(ScopeAccessException::class)
+//        fun fromAccessString(accessString: String) : ScopeAccess {
+//            return when (accessString) {
+//                "read" -> READ
+//                "write" -> WRITE
+//                else -> throw ScopeAccessException("Invalid access: $accessString")
+//            }
+//        }
+//    }
+//
+//    fun toAccessString() : String {
+//        return when (this) {
+//            READ -> "read"
+//            WRITE -> "write"
+//        }
+//    }
 }
 
+@JsonClass(generateAdapter = true)
 data class AllowedScope(
     val scope: Scope,
     val access: ScopeAccess
@@ -48,31 +52,32 @@ data class AllowedScope(
     }
 }
 
+@JsonClass(generateAdapter = true)
 data class ScopeRequest(
     val identifier: String,
     val access: ScopeAccess
 ) {
-    companion object {
-        @Throws(ScopeAccessException::class, ScopeRequestException::class)
-        fun fromScopeRequestString(scopeRequestString: String) : ScopeRequest {
-            val components = scopeRequestString.split(".")
-            if (components.count() != 2) {
-                throw ScopeRequestException("Invalid scope: $scopeRequestString")
-            }
-
-            return ScopeRequest(
-                components[0],
-                ScopeAccess.fromAccessString(
-                    components[1]
-                )
-            )
-
-        }
-    }
-
-    fun toScopeRequestString() : String {
-        return "${this.identifier}.${this.access.toAccessString()}"
-    }
+//    companion object {
+//        @Throws(ScopeAccessException::class, ScopeRequestException::class)
+//        fun fromScopeRequestString(scopeRequestString: String) : ScopeRequest {
+//            val components = scopeRequestString.split(".")
+//            if (components.count() != 2) {
+//                throw ScopeRequestException("Invalid scope: $scopeRequestString")
+//            }
+//
+//            return ScopeRequest(
+//                components[0],
+//                ScopeAccess.fromAccessString(
+//                    components[1]
+//                )
+//            )
+//
+//        }
+//    }
+//
+//    fun toScopeRequestString() : String {
+//        return "${this.identifier}.${this.access.toAccessString()}"
+//    }
 }
 
 

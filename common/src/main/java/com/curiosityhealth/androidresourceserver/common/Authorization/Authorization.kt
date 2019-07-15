@@ -1,4 +1,4 @@
-package com.curiosityhealth.androidresourceserver.common.Authorization
+package com.curiosityhealth.androidresourceserver.common.authorization
 
 import android.content.ComponentName
 import android.content.Intent
@@ -13,10 +13,13 @@ import com.google.crypto.tink.hybrid.HybridEncryptFactory
 import com.google.crypto.tink.signature.PublicKeySignFactory
 import com.google.crypto.tink.signature.PublicKeyVerifyFactory
 import com.google.crypto.tink.subtle.Random
-import com.google.gson.*
 import java.security.GeneralSecurityException
 import android.R.attr.data
 import com.google.crypto.tink.subtle.Base64
+import com.squareup.moshi.JsonClass
+import com.squareup.moshi.JsonReader
+import com.squareup.moshi.Moshi
+import okio.Buffer
 
 
 class Authorization {
@@ -63,10 +66,11 @@ class Authorization {
         ACCESS_TOKEN, REFRESH_TOKEN, STATE, NONCE
     }
 
-    class Request(
+    @JsonClass(generateAdapter = true)
+    data class Request(
         val clientId: String,
         val state: Long,
-        val scopes: Set<ScopeRequest>,
+        val scopes: List<ScopeRequest>,
         val includeRefreshToken: Boolean
     ) {
 
@@ -119,37 +123,16 @@ class Authorization {
                 val contextInfo = encryptedParameters.clientId.toByteArray()
                 val decryptedBytes = hybridDecrypt.decrypt(encryptedParameters.encryptedJSON, contextInfo)
 
-                val jsonString = String(decryptedBytes)
-                val jsonObject: JsonObject = JsonParser().parse(jsonString).asJsonObject
+                val moshi = Moshi.Builder().build()
+                val jsonAdapter = moshi.adapter(Request::class.java)
 
-                val paramClientId: String = jsonObject.getAsJsonPrimitive(Authorization.REQUEST_JSON_PARAMS.CLIENT_ID.name).let { if (it.isString) it.asString else null } ?: throw AuthorizationException.MalformedRequest("Client ID not included in request")
-                if (encryptedParameters.clientId != paramClientId) {
+                val request: Request = jsonAdapter.fromJson(String(decryptedBytes)) ?: throw AuthorizationException.MalformedRequest("Invalid parameters")
+
+                if (encryptedParameters.clientId != request.clientId) {
                     throw AuthorizationException.MalformedRequest("Client ID does not match")
                 }
 
-                val state: Long = jsonObject.getAsJsonPrimitive(Authorization.REQUEST_JSON_PARAMS.STATE.name).let { if (it.isNumber) it.asNumber else null }?.toLong() ?: throw AuthorizationException.MalformedRequest("State not included in request")
-
-                val scopeArray: JsonArray = jsonObject.getAsJsonArray(Authorization.REQUEST_JSON_PARAMS.SCOPES.name)
-                val convertScope: (JsonElement) -> ScopeRequest? = convertScope@{ jsonElement ->
-                    if (jsonElement.isJsonPrimitive) {
-                        val primitive = jsonElement.asJsonPrimitive
-                        if (primitive.isString) {
-                            return@convertScope ScopeRequest.fromScopeRequestString(primitive.asString)
-                        }
-                    }
-
-                    null
-                }
-                val scopes: Set<ScopeRequest> = scopeArray.asIterable().mapNotNull(convertScope).toSet()
-
-                val includeRefreshToken: Boolean = jsonObject.getAsJsonPrimitive(Authorization.REQUEST_JSON_PARAMS.INCLUDE_REFRESH_TOKEN.name).let { if (it.isBoolean) it.asBoolean else null } ?: throw AuthorizationException.MalformedRequest("includeRefreshToken not included in request")
-
-                return Request(
-                    encryptedParameters.clientId,
-                    state,
-                    scopes,
-                    includeRefreshToken
-                )
+                return request
             }
 
             @Throws(GeneralSecurityException::class, AuthorizationException.MalformedRequest::class)
@@ -217,20 +200,10 @@ class Authorization {
             privateSigningKeysetHandle: KeysetHandle
         ) : EncryptedParameters {
 
-            val parameters: JsonObject = JsonObject()
-            parameters.addProperty(Authorization.REQUEST_JSON_PARAMS.CLIENT_ID.name, this.clientId)
-            parameters.addProperty(Authorization.REQUEST_JSON_PARAMS.STATE.name, this.state)
-            val scopes: JsonArray = this.scopes.map { it.toScopeRequestString() }.fold(JsonArray()) { acc, scopeRequestString ->
-                acc.add(scopeRequestString)
-                acc
-            }
+            val moshi = Moshi.Builder().build()
+            val jsonAdapter = moshi.adapter(Request::class.java)
 
-            parameters.add(Authorization.REQUEST_JSON_PARAMS.SCOPES.name, scopes)
-            parameters.addProperty(Authorization.REQUEST_JSON_PARAMS.INCLUDE_REFRESH_TOKEN.name, this.includeRefreshToken)
-            val nonce = Base64.encodeToString(Random.randBytes(64), Base64.DEFAULT)
-            parameters.addProperty(Authorization.REQUEST_JSON_PARAMS.NONCE.name, nonce)
-
-            val parameterString = parameters.toString()
+            val parameterString = jsonAdapter.toJson(this)
             val parameterBytes: ByteArray = parameterString.toByteArray()
 
             val hybridEncrypt = HybridEncryptFactory.getPrimitive(publicEncryptionKeysetHandle)
@@ -252,7 +225,7 @@ class Authorization {
     }
 
 
-
+    @JsonClass(generateAdapter = true)
     data class Response(
         val accessToken: String,
         val refreshtoken: String,
@@ -355,18 +328,10 @@ class Authorization {
                 val contextInfo = clientId.toByteArray()
                 val decryptedBytes = hybridDecrypt.decrypt(encryptedParameters.encryptedJSON, contextInfo)
 
-                val jsonString = String(decryptedBytes)
-                val jsonObject: JsonObject = JsonParser().parse(jsonString).asJsonObject
+                val moshi = Moshi.Builder().build()
+                val jsonAdapter = moshi.adapter(Response::class.java)
 
-                val accessToken: String = jsonObject.getAsJsonPrimitive(Authorization.RESPONSE_JSON_PARAMS.ACCESS_TOKEN.name).let { if (it.isString) it.asString else null } ?: throw AuthorizationException.MalformedResponse("Access Token not included in response")
-                val refreshToken: String = jsonObject.getAsJsonPrimitive(Authorization.RESPONSE_JSON_PARAMS.REFRESH_TOKEN.name).let { if (it.isString) it.asString else null } ?: throw AuthorizationException.MalformedResponse("Refresh Token not included in response")
-                val state: Long = jsonObject.getAsJsonPrimitive(Authorization.RESPONSE_JSON_PARAMS.STATE.name).let { if (it.isNumber) it.asNumber else null }?.toLong() ?: throw AuthorizationException.MalformedRequest("State not included in request")
-
-                return Response(
-                    accessToken,
-                    refreshToken,
-                    state
-                )
+                return jsonAdapter.fromJson(String(decryptedBytes)) ?: throw AuthorizationException.MalformedRequest("Invalid parameters")
             }
         }
 
@@ -396,14 +361,10 @@ class Authorization {
             privateSigningKeysetHandle: KeysetHandle
         ) : Response.EncryptedParameters {
 
-            val parameters: JsonObject = JsonObject()
-            parameters.addProperty(Authorization.RESPONSE_JSON_PARAMS.ACCESS_TOKEN.name, this.accessToken)
-            parameters.addProperty(Authorization.RESPONSE_JSON_PARAMS.REFRESH_TOKEN.name, this.refreshtoken)
-            parameters.addProperty(Authorization.RESPONSE_JSON_PARAMS.STATE.name, this.state)
-            val nonce = Base64.encodeToString(Random.randBytes(64), Base64.DEFAULT)
-            parameters.addProperty(Authorization.RESPONSE_JSON_PARAMS.NONCE.name, nonce)
+            val moshi = Moshi.Builder().build()
+            val jsonAdapter = moshi.adapter(Response::class.java)
 
-            val parameterString = parameters.toString()
+            val parameterString = jsonAdapter.toJson(this)
             val parameterBytes: ByteArray = parameterString.toByteArray()
 
             val hybridEncrypt = HybridEncryptFactory.getPrimitive(publicEncryptionKeysetHandle)

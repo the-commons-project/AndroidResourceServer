@@ -1,10 +1,10 @@
 package com.curiosityhealth.androidresourceserver.resourceserversampleapp.clientmanagement
 
 import android.content.Context
-import com.curiosityhealth.androidresourceserver.common.Authorization.AllowedScope
-import com.curiosityhealth.androidresourceserver.common.Authorization.Scope
-import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeAccess
-import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequest
+import com.curiosityhealth.androidresourceserver.common.authorization.AllowedScope
+import com.curiosityhealth.androidresourceserver.common.authorization.Scope
+import com.curiosityhealth.androidresourceserver.common.authorization.ScopeAccess
+import com.curiosityhealth.androidresourceserver.common.authorization.ScopeRequest
 import com.curiosityhealth.androidresourceserver.resourceserver.client.Client
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientHandshake
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientManager
@@ -14,11 +14,15 @@ import com.google.crypto.tink.JsonKeysetWriter
 import com.google.crypto.tink.KeysetHandle
 import com.google.crypto.tink.config.TinkConfig
 import com.google.crypto.tink.integration.android.AndroidKeystoreKmsClient
+import com.squareup.moshi.JsonAdapter
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
 import org.researchsuite.researchsuiteextensions.common.RSKeyValueStore
 import org.researchsuite.researchsuiteextensions.encryption.RSEncryptedJavaObjectConverter
 import org.researchsuite.researchsuiteextensions.encryption.RSEncryptionManager
 import org.researchsuite.researchsuiteextensions.encryption.RSEncryptor
 import java.io.ByteArrayOutputStream
+import java.lang.reflect.Type
 
 
 class SampleClientManager(
@@ -145,16 +149,25 @@ class SampleClientManager(
         this.storeKeyset("$clientId.serverPrivateEncryptionKey", clientHandshake.serverPrivateEncryptionKey)
     }
 
-    override fun setApprovedScopes(clientId: String, approvedScopes: Set<ScopeRequest>) {
+    override fun setApprovedScopes(clientId: String, approvedScopes: List<ScopeRequest>) {
         val key = "$clientId.approvedScopes"
-        val scopeArray: List<String> = approvedScopes.map { it.toScopeRequestString() }
-        this.keyValueStore.set(key, scopeArray)
+
+        val type: Type = Types.newParameterizedType(List::class.java, ScopeRequest::class.java)
+        val moshi = Moshi.Builder().build()
+        val jsonAdapter: JsonAdapter<List<ScopeRequest>> = moshi.adapter(type)
+        val jsonString = jsonAdapter.toJson(approvedScopes)
+        this.keyValueStore.set(key, jsonString)
     }
 
-    override fun getApprovedScopes(clientId: String): Set<ScopeRequest>? {
+    override fun getApprovedScopes(clientId: String): List<ScopeRequest>? {
         val key = "$clientId.approvedScopes"
-        val scopeArray: List<String>? = this.keyValueStore.get(key) as? List<String>
-        return scopeArray?.map { ScopeRequest.fromScopeRequestString(it) }?.toSet()
+        val jsonString = (this.keyValueStore.get(key) as? String) ?: return null
+
+        val type: Type = Types.newParameterizedType(List::class.java, ScopeRequest::class.java)
+        val moshi = Moshi.Builder().build()
+        val jsonAdapter: JsonAdapter<List<ScopeRequest>> = moshi.adapter(type)
+
+        return jsonAdapter.fromJson(jsonString)
     }
 
     override fun clearApprovedScopes(clientId: String) {

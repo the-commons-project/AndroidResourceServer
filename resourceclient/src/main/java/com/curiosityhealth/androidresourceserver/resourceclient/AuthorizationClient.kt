@@ -9,8 +9,8 @@ import android.os.Handler
 import android.util.Base64
 import androidx.core.app.JobIntentService
 import com.curiosityhealth.androidresourceserver.common.*
-import com.curiosityhealth.androidresourceserver.common.Authorization.Authorization
-import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequest
+import com.curiosityhealth.androidresourceserver.common.authorization.Authorization
+import com.curiosityhealth.androidresourceserver.common.authorization.ScopeRequest
 import com.google.crypto.tink.*
 import com.google.crypto.tink.config.TinkConfig
 import com.google.crypto.tink.hybrid.HybridDecryptFactory
@@ -134,7 +134,7 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
 
     fun authorize(
         context: Context,
-        requestedScopes: Set<ScopeRequest>,
+        requestedScopes: List<ScopeRequest>,
         includeRefreshToken: Boolean,
         completion: (successful: Boolean, exception: Exception?) -> Unit) {
 
@@ -170,7 +170,7 @@ class AuthorizationClient(val context: Context, val config: AuthorizationClientC
 
     private fun doAuthorization(
         context: Context,
-        requestedScopes: Set<ScopeRequest>,
+        requestedScopes: List<ScopeRequest>,
         includeRefreshToken: Boolean,
         completion: (successful: Boolean, exception: Exception?) -> Unit
     ) {

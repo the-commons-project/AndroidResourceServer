@@ -7,7 +7,7 @@ import com.auth0.jwt.exceptions.JWTCreationException
 import com.auth0.jwt.JWT
 import com.auth0.jwt.JWTVerifier
 import com.auth0.jwt.algorithms.Algorithm
-import com.curiosityhealth.androidresourceserver.common.Authorization.Authorization
+import com.curiosityhealth.androidresourceserver.common.authorization.Authorization
 import java.util.*
 import com.auth0.jwt.exceptions.JWTVerificationException
 

@@ -1,4 +1,4 @@
-package com.curiosityhealth.androidresourceserver.common.Authorization
+package com.curiosityhealth.androidresourceserver.common.authorization
 
 sealed class AuthorizationException(s: String) : Exception(s) {
     class MalformedRequest(s: String): AuthorizationException(s)

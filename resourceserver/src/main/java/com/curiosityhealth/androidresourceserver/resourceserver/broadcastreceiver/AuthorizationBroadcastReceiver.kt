@@ -6,9 +6,9 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.ResultReceiver
-import com.curiosityhealth.androidresourceserver.common.Authorization.Authorization
-import com.curiosityhealth.androidresourceserver.common.Authorization.AuthorizationException
-import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequest
+import com.curiosityhealth.androidresourceserver.common.authorization.Authorization
+import com.curiosityhealth.androidresourceserver.common.authorization.AuthorizationException
+import com.curiosityhealth.androidresourceserver.common.authorization.ScopeRequest
 import com.curiosityhealth.androidresourceserver.common.VerifyHandshake
 import com.curiosityhealth.androidresourceserver.resourceserver.activity.AuthorizationActivity
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientManager

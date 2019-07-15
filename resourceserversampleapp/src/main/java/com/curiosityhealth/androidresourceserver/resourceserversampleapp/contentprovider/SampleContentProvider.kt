@@ -9,9 +9,11 @@ import android.net.Uri
 import android.util.Base64
 import android.util.Log
 import com.auth0.jwt.interfaces.DecodedJWT
-import com.curiosityhealth.androidresourceserver.common.Authorization.Authorization
-import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeAccess
-import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequest
+import com.curiosityhealth.androidresourceserver.common.authorization.Authorization
+import com.curiosityhealth.androidresourceserver.common.authorization.ScopeAccess
+import com.curiosityhealth.androidresourceserver.common.authorization.ScopeRequest
+import com.curiosityhealth.androidresourceserver.common.content.ContentResponse
+import com.curiosityhealth.androidresourceserver.common.content.SampleContentResponseItem1
 import com.curiosityhealth.androidresourceserver.resourceserversampleapp.clientmanagement.SampleClientManager
 import com.curiosityhealth.androidresourceserver.resourceserversampleapp.token.SampleTokenManager
 import com.google.crypto.tink.hybrid.HybridDecryptFactory
@@ -19,26 +21,11 @@ import com.google.crypto.tink.hybrid.HybridEncryptFactory
 import com.google.crypto.tink.signature.PublicKeySignFactory
 import com.google.crypto.tink.signature.PublicKeyVerifyFactory
 import com.google.crypto.tink.subtle.Random
-import com.google.gson.JsonObject
-
-interface ContentResponseItem {
-    fun toJsonObject() : JsonObject
-}
-
-data class SampleContentResponseItem1(val identifier: String, val sampleData: String) : ContentResponseItem {
-    override fun toJsonObject(): JsonObject {
-        val jsonObject: JsonObject = JsonObject()
-        jsonObject.addProperty("identifier", this.identifier)
-        jsonObject.addProperty("sampleData", this.sampleData)
-        return jsonObject
-    }
-}
-
-data class ContentResponse(val contentResponseItems: List<ContentResponseItem>)
+import com.squareup.moshi.Moshi
 
 abstract class ContentRequestHandler(val authority: String) {
     abstract fun matches(path: Uri) : Boolean
-    abstract fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: JsonObject?) : ContentResponse?
+    abstract fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?) : ContentResponse?
 }
 
 class SampleContentRequestHandler(authority: String, path: String) : ContentRequestHandler(authority) {
@@ -60,18 +47,21 @@ class SampleContentRequestHandler(authority: String, path: String) : ContentRequ
         return match == SAMPLE_DATA_1
     }
 
-    override fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: JsonObject?): ContentResponse? {
+    override fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?): ContentResponse? {
         val approvedScopes = SampleClientManager.shared.getApprovedScopes(clientId) ?: return ContentResponse(emptyList())
         if (!approvedScopes.contains(requiredScope)) {
             return ContentResponse(emptyList())
         }
 
-        val items: List<ContentResponseItem> = listOf(
+        val items: List<SampleContentResponseItem1> = listOf(
             SampleContentResponseItem1("item 1", "data 1"),
             SampleContentResponseItem1("item 2", "data 2")
         )
 
-        return ContentResponse(items)
+        val moshi = Moshi.Builder().build()
+        val jsonAdapter = moshi.adapter(SampleContentResponseItem1::class.java)
+
+        return ContentResponse(items.map { jsonAdapter.toJson(it) })
     }
 }
 
@@ -131,12 +121,13 @@ class SampleContentProvider : ContentProvider() {
         val privateSigningKey = clientHandshake.serverPrivateSigningKey
         val publicEncryptionKey = clientHandshake.clientPublicEncryptionKey
 
-        val jsonResponseItems = contentResponse.contentResponseItems.map { it.toJsonObject() }
+//        val jsonResponseItems = contentResponse.contentResponseItems.map { it.toJsonObject() }
         //for each item, convert JSON into data and encrypt it, add to cursor
         val columns: Array<String> = arrayOf("encrypted_data", "signature")
         val mc = MatrixCursor(columns)
-        jsonResponseItems.forEach { jsonObject ->
-            val data = jsonObject.toString().toByteArray()
+
+        contentResponse.contentResponseJsonStrings.forEach { contentResponseJsonString ->
+            val data = contentResponseJsonString.toByteArray()
 
             val hybridEncrypt = HybridEncryptFactory.getPrimitive(publicEncryptionKey)
             val contextInfo = clientId.toByteArray()

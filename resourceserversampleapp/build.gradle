@@ -1,6 +1,8 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-android-extensions'
+apply plugin: 'kotlin-kapt'
+
 android {
     compileSdkVersion 28
 
@@ -37,7 +39,8 @@ dependencies {
     implementation project(":common")
 
     implementation "com.google.crypto.tink:tink-android:$tink_version"
-    implementation "com.google.code.gson:gson:2.8.5"
+    implementation "com.squareup.moshi:moshi:1.8.0"
+    kapt("com.squareup.moshi:moshi-kotlin-codegen:1.8.0")
     implementation 'com.auth0:java-jwt:3.8.1'
 
     implementation "org.researchsuite:researchsuiteextensions-common:$researchsuiteextensions_version"

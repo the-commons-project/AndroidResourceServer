@@ -10,13 +10,17 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
-import com.curiosityhealth.androidresourceserver.common.Authorization.*
+import com.curiosityhealth.androidresourceserver.common.authorization.*
 import com.curiosityhealth.androidresourceserver.common.CompleteHandshake
 import com.curiosityhealth.androidresourceserver.common.Handshake
 import com.curiosityhealth.androidresourceserver.common.HandshakeException
 import com.curiosityhealth.androidresourceserver.common.VerifyHandshake
 import com.curiosityhealth.androidresourceserver.resourceserver.R
 import com.curiosityhealth.androidresourceserver.resourceserver.client.ClientManager
+import com.squareup.moshi.JsonAdapter
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
+import java.lang.reflect.Type
 
 abstract class AuthorizationActivity : AppCompatActivity() {
 
@@ -25,7 +29,7 @@ abstract class AuthorizationActivity : AppCompatActivity() {
     data class Response(
         val clientId: String,
         val state: Long,
-        val approvedScopes: Set<ScopeRequest>
+        val approvedScopes: List<ScopeRequest>
     ) {
         companion object {
 
@@ -37,8 +41,13 @@ abstract class AuthorizationActivity : AppCompatActivity() {
 
                 val clientId = bundle.getString(RESPONSE_PARAMS.CLIENT_ID.name) ?: return null
                 val state = bundle.getLong(RESPONSE_PARAMS.STATE.name)
-                val scopeArray: Array<String> = bundle.getStringArray(RESPONSE_PARAMS.SCOPES.name) ?: return null
-                val requestedScopes: Set<ScopeRequest> = scopeArray.map { ScopeRequest.fromScopeRequestString(it) }.toSet()
+                val requestedScopesJsonString = bundle.getString(RESPONSE_PARAMS.SCOPES.name) ?: return null
+
+                val type: Type = Types.newParameterizedType(List::class.java, ScopeRequest::class.java)
+                val moshi = Moshi.Builder().build()
+                val jsonAdapter: JsonAdapter<List<ScopeRequest>> = moshi.adapter(type)
+
+                val requestedScopes: List<ScopeRequest> = jsonAdapter.fromJson(requestedScopesJsonString) ?: return null
 
                 return Response(
                     clientId,
@@ -52,8 +61,13 @@ abstract class AuthorizationActivity : AppCompatActivity() {
             val bundle = Bundle()
             bundle.putString(Handshake.RESPONSE_PARAMS.CLIENT_ID.name, this.clientId)
             bundle.putLong(Handshake.RESPONSE_PARAMS.STATE.name, this.state)
-            val scopeArray: Array<String> = this.approvedScopes.map { it.toScopeRequestString() }.toTypedArray()
-            bundle.putStringArray(RESPONSE_PARAMS.SCOPES.name, scopeArray)
+
+            val type: Type = Types.newParameterizedType(List::class.java, ScopeRequest::class.java)
+            val moshi = Moshi.Builder().build()
+            val jsonAdapter: JsonAdapter<List<ScopeRequest>> = moshi.adapter(type)
+
+            val requestedScopesJsonString: String = jsonAdapter.toJson(this.approvedScopes)
+            bundle.putString(RESPONSE_PARAMS.SCOPES.name, requestedScopesJsonString)
             return bundle
         }
 
@@ -122,7 +136,13 @@ abstract class AuthorizationActivity : AppCompatActivity() {
 
             intent.putExtra(REQUEST_PARAMS.CLIENT_ID.name, request.clientId)
             intent.putExtra(REQUEST_PARAMS.STATE.name, request.state)
-            intent.putExtra(REQUEST_PARAMS.SCOPES.name, request.scopes.map { it.toScopeRequestString() }.toTypedArray())
+
+            val type: Type = Types.newParameterizedType(List::class.java, ScopeRequest::class.java)
+            val moshi = Moshi.Builder().build()
+            val jsonAdapter: JsonAdapter<List<ScopeRequest>> = moshi.adapter(type)
+            val requestedScopesJsonString: String = jsonAdapter.toJson(request.scopes)
+            intent.putExtra(REQUEST_PARAMS.SCOPES.name, requestedScopesJsonString)
+
             intent.putExtra(REQUEST_PARAMS.INCLUDE_REFRESH_TOKEN.name, request.includeRefreshToken)
 
             intent.putExtra(REQUEST_PARAMS.RESPONSE_RECEIVER.name, resultReceiver)
@@ -137,11 +157,25 @@ abstract class AuthorizationActivity : AppCompatActivity() {
 
         val clientId: String = this.intent.getStringExtra(REQUEST_PARAMS.CLIENT_ID.name)
         val state: Long = this.intent.getLongExtra(REQUEST_PARAMS.STATE.name, -1)
-        val scopeArray: Array<String> = this.intent.getStringArrayExtra(REQUEST_PARAMS.SCOPES.name)
-        val requestedScopes: Set<ScopeRequest> = scopeArray.map { ScopeRequest.fromScopeRequestString(it) }.toSet()
-        val includeRefreshToken: Boolean = this.intent.getBooleanExtra(REQUEST_PARAMS.INCLUDE_REFRESH_TOKEN.name, true)
+
+        val requestedScopesJsonString = this.intent.getStringExtra(REQUEST_PARAMS.SCOPES.name)
+        val type: Type = Types.newParameterizedType(List::class.java, ScopeRequest::class.java)
+        val moshi = Moshi.Builder().build()
+        val jsonAdapter: JsonAdapter<List<ScopeRequest>> = moshi.adapter(type)
 
         val responseReceiver: ResultReceiver = this.intent.getParcelableExtra(REQUEST_PARAMS.RESPONSE_RECEIVER.name)
+
+        val requestedScopes: List<ScopeRequest>? = jsonAdapter.fromJson(requestedScopesJsonString)
+        if (requestedScopes == null) {
+            val code = Authorization.RESULT_CODE_ERROR
+            val bundle = Bundle()
+            val error = AuthorizationException.MalformedRequest("Invalid Scopes")
+            bundle.putSerializable(Authorization.RESPONSE_PARAMS.EXCEPTION.name, error)
+            responseReceiver.send(code, bundle)
+            return
+        }
+
+        val includeRefreshToken: Boolean = this.intent.getBooleanExtra(REQUEST_PARAMS.INCLUDE_REFRESH_TOKEN.name, true)
 
         val context = this
         val listView = findViewById<ListView>(R.id.activity_authorization_scope_choice_list_view)
@@ -166,7 +200,7 @@ abstract class AuthorizationActivity : AppCompatActivity() {
                 responseReceiver.send(code, bundle)
             }
             else {
-                val approvedScopes: Set<ScopeRequest> = adaptor.approvedScopes.map { it.toScopeRequest() }.toSet()
+                val approvedScopes: List<ScopeRequest> = adaptor.approvedScopes.map { it.toScopeRequest() }
                 //send approved scopes back to the authorization broadcast receiver
                 //broadcast receiver will send response back to the original requester
 

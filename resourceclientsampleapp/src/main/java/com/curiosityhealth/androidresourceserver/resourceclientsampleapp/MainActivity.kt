@@ -12,15 +12,14 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.loader.app.LoaderManager
 import androidx.loader.content.CursorLoader
 import androidx.loader.content.Loader
-import com.curiosityhealth.androidresourceserver.common.Authorization.Authorization
-import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeAccess
-import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequest
-import com.curiosityhealth.androidresourceserver.common.Authorization.ScopeRequestException
+import com.curiosityhealth.androidresourceserver.common.authorization.Authorization
+import com.curiosityhealth.androidresourceserver.common.authorization.ScopeAccess
+import com.curiosityhealth.androidresourceserver.common.authorization.ScopeRequest
+import com.curiosityhealth.androidresourceserver.common.authorization.ScopeRequestException
 import com.curiosityhealth.androidresourceserver.common.BeginHandshake
 import com.curiosityhealth.androidresourceserver.resourceclient.AuthorizationClient
 import com.curiosityhealth.androidresourceserver.resourceclient.AuthorizationClientConfig
-import com.google.gson.JsonObject
-import com.google.gson.JsonParser
+import com.squareup.moshi.Moshi
 import java.util.*
 
 
@@ -69,7 +68,7 @@ class MainActivity : AppCompatActivity() {
         )
         this.authorizationClient = authorizationClient
 
-        val requestedScopes = setOf<ScopeRequest>(
+        val requestedScopes = listOf<ScopeRequest>(
             ScopeRequest("sample_scope_1", ScopeAccess.READ),
             ScopeRequest("sample_scope_2", ScopeAccess.READ)
         )
@@ -139,11 +138,11 @@ class MainActivity : AppCompatActivity() {
 
                 val data = authorizationClient.decryptData(encryptedData) ?: return null
                 val jsonString = String(data)
-                val jsonObject: JsonObject = JsonParser().parse(jsonString).asJsonObject
-                val identifier: String = jsonObject.getAsJsonPrimitive("identifier").let { if (it.isString) it.asString else null } ?: return null
-                val sampleData: String = jsonObject.getAsJsonPrimitive("sampleData").let { if (it.isString) it.asString else null } ?: return null
 
-                return SampleContentResponseItem1(identifier, sampleData)
+                val moshi = Moshi.Builder().build()
+                val jsonAdapter = moshi.adapter(SampleContentResponseItem1::class.java)
+
+                return jsonAdapter.fromJson(jsonString)
             }
 
             fun loadFinishedHelper(cursor: Cursor, acc: List<SampleContentResponseItem1>) : List<SampleContentResponseItem1> {
