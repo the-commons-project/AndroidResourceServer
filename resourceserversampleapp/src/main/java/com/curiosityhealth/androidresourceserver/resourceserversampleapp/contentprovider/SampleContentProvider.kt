@@ -16,6 +16,7 @@ import com.curiosityhealth.androidresourceserver.common.authorization.ScopeReque
 import com.curiosityhealth.androidresourceserver.common.content.ContentResponse
 import com.curiosityhealth.androidresourceserver.common.content.SampleContentResponseItem1
 import com.curiosityhealth.androidresourceserver.common.content.SampleContentResponseItem2
+import com.curiosityhealth.androidresourceserver.common.resourceserver.ResourceServerRequest
 import com.curiosityhealth.androidresourceserver.resourceserversampleapp.clientmanagement.SampleClientManager
 import com.curiosityhealth.androidresourceserver.resourceserversampleapp.token.SampleTokenManager
 import com.google.crypto.tink.hybrid.HybridDecryptFactory
@@ -33,6 +34,23 @@ import java.util.concurrent.FutureTask
 abstract class ContentRequestHandler(val authority: String) {
     abstract fun matches(path: Uri) : Boolean
     abstract fun handleContentRequest(path: Uri, clientId: String, token: DecodedJWT?, parameters: Map<String, Any>?, completion: (ContentResponse?, Exception?) -> Unit)
+}
+
+class APIViewContentRequestHandler(authority: String, path: String, val view: APIView) {
+    companion object {
+        val MATCH = 1
+    }
+
+    val matcher: UriMatcher = {
+        val matcher = UriMatcher(UriMatcher.NO_MATCH)
+        matcher.addURI(authority, path, MATCH)
+        matcher
+    }()
+
+    fun matches(uri: Uri): Boolean {
+        val match = matcher.match(uri)
+        return match == MATCH
+    }
 }
 
 class SampleContentRequestHandler1(authority: String, path: String) : ContentRequestHandler(authority) {
@@ -115,6 +133,8 @@ class SampleContentRequestHandler2(authority: String, path: String) : ContentReq
     }
 }
 
+
+
 class SampleContentProvider : ContentProvider() {
 
     companion object {
@@ -125,13 +145,13 @@ class SampleContentProvider : ContentProvider() {
 
     }
 
-    lateinit var contentRequestHandlers: List<ContentRequestHandler>
+    lateinit var contentRequestHandlers: List<APIViewContentRequestHandler>
     override fun onCreate(): Boolean {
 
-        val contentRequestHandlers: List<ContentRequestHandler> = listOf(
-            SampleContentRequestHandler1(authority, "sample_data_1"),
-            SampleContentRequestHandler2(authority, "sample_data_2")
+        val contentRequestHandlers: List<APIViewContentRequestHandler> = listOf(
+            APIViewContentRequestHandler(authority, "sample_data_1", SampleListAPIView1())
         )
+
         this.contentRequestHandlers = contentRequestHandlers
 
         return true
@@ -139,6 +159,27 @@ class SampleContentProvider : ContentProvider() {
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? {
         TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
+    }
+
+    fun getTokenString(uri: Uri, clientId: String) : String? {
+        val base64EncryptedToken: String = uri.getQueryParameter("token") ?: return null
+        val encryptedTokenData: ByteArray = Base64.decode(base64EncryptedToken, Base64.DEFAULT)
+        val base64TokenSignature = uri.getQueryParameter("token_signature") ?: return null
+        val tokenSignatureData: ByteArray = Base64.decode(base64TokenSignature, Base64.DEFAULT)
+
+        val clientHandshake = SampleClientManager.shared.getClientHandshake(clientId) ?: return null
+        val publicSigningKeysetHandle = clientHandshake.clientPublicSigningKey
+        val privateEncryptionKeysetHandle = clientHandshake.serverPrivateEncryptionKey
+
+        //check signature
+        val verifier = PublicKeyVerifyFactory.getPrimitive(publicSigningKeysetHandle)
+        verifier.verify(tokenSignatureData, encryptedTokenData)
+
+        //decrypt data
+        val hybridDecrypt = HybridDecryptFactory.getPrimitive(privateEncryptionKeysetHandle)
+        val contextInfo = clientId.toByteArray()
+        val decryptedTokenData = hybridDecrypt.decrypt(encryptedTokenData, contextInfo)
+        return String(decryptedTokenData)
     }
 
     fun getToken(uri: Uri, clientId: String) : DecodedJWT? {
@@ -166,7 +207,7 @@ class SampleContentProvider : ContentProvider() {
 
     }
 
-    private fun generateCursor(clientId: String, contentResponse: ContentResponse) : Cursor? {
+    private fun generateCursor(clientId: String, apiResponse: APIResponse) : Cursor? {
         val clientHandshake = SampleClientManager.shared.getClientHandshake(clientId) ?: return null
 
         val privateSigningKey = clientHandshake.serverPrivateSigningKey
@@ -177,7 +218,7 @@ class SampleContentProvider : ContentProvider() {
         val columns: Array<String> = arrayOf("encrypted_data", "signature")
         val mc = MatrixCursor(columns)
 
-        contentResponse.contentResponseJsonStrings.forEach { contentResponseJsonString ->
+        apiResponse.JSONStrings?.forEach { contentResponseJsonString ->
             val data = contentResponseJsonString.toByteArray()
 
             val hybridEncrypt = HybridEncryptFactory.getPrimitive(publicEncryptionKey)
@@ -209,21 +250,6 @@ class SampleContentProvider : ContentProvider() {
 
         override fun doInBackground(vararg params: Void?): ContentResponse? {
 
-//            val contentResponse: ContentResponse? = Observable.create<ContentResponse?> { emitter ->
-//                contentRequestHandler.handleContentRequest(uri, clientId, token, parameters) { contentResponse, exception ->
-//                    if (contentResponse != null) {
-//                        emitter.onSuccess(contentResponse)
-//                    }
-//                    else if (exception != null) {
-//                        emitter.onError(exception)
-//                    }
-//                    else {
-//                        emitter.onComplete()
-//                    }
-//
-//                }
-//            }.blockingSingle()
-
             val contentResponse: ContentResponse? = Single.create<ContentResponse?> { emitter ->
                 contentRequestHandler.handleContentRequest(uri, clientId, token, parameters) { contentResponse, exception ->
                     if (contentResponse != null) {
@@ -250,6 +276,29 @@ class SampleContentProvider : ContentProvider() {
         ).execute().get()
     }
 
+    class APIViewRequestHandlerTask(
+        val view: APIView,
+        val uri: Uri,
+        val resourceServerRequest: ResourceServerRequest
+    ) : AsyncTask<Void, Void, APIResponse>() {
+
+        override fun doInBackground(vararg params: Void?): APIResponse {
+            return Single.create<APIResponse> { emitter ->
+                view.handleRequest(uri, resourceServerRequest) { response ->
+                    emitter.onSuccess(response)
+                }
+            }.blockingGet()
+        }
+    }
+
+    fun handleAPIViewRequestAsync(view: APIView, uri: Uri, resourceServerRequest: ResourceServerRequest) : APIResponse {
+        return APIViewRequestHandlerTask(
+            view,
+            uri,
+            resourceServerRequest
+        ).execute().get()
+    }
+
     override fun query(
         uri: Uri,
         projection: Array<String>?,
@@ -261,12 +310,18 @@ class SampleContentProvider : ContentProvider() {
         val clientId = uri.getQueryParameter("client_id") ?: return null
 
         //TODO: this throws if it cant find a match
-        val requestHandler: ContentRequestHandler = this.contentRequestHandlers.first { handler ->
+        val requestHandler: APIViewContentRequestHandler = this.contentRequestHandlers.first { handler ->
             handler.matches(uri)
         }
 
-        val token = getToken(uri, clientId)
-        val response = handleRequestAsync(requestHandler, uri, clientId, token, null) ?: return null
+        val tokenString = getTokenString(uri, clientId)
+//        val token = getToken(uri, clientId)
+        val resourceServerRequest = ResourceServerRequest(
+            tokenString,
+            null
+        )
+
+        val response = handleAPIViewRequestAsync(requestHandler.view, uri, resourceServerRequest)
         return generateCursor(clientId, response)
     }
 
