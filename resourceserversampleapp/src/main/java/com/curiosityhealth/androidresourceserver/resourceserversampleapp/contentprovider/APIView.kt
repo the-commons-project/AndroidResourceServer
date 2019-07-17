@@ -5,6 +5,9 @@ import com.auth0.jwt.interfaces.DecodedJWT
 import com.curiosityhealth.androidresourceserver.common.content.ContentResponse
 import com.curiosityhealth.androidresourceserver.common.resourceserver.ResourceServerRequest
 import com.curiosityhealth.androidresourceserver.resourceserver.activity.AuthorizationActivity
+import com.curiosityhealth.androidresourceserver.resourceserver.client.Client
+import com.curiosityhealth.androidresourceserver.resourceserversampleapp.clientmanagement.SampleClientManager
+import com.curiosityhealth.androidresourceserver.resourceserversampleapp.token.SampleTokenManager
 import io.reactivex.Maybe
 import io.reactivex.Single
 import java.lang.Exception
@@ -44,16 +47,45 @@ data class APIRoute(
     val view: APIView
 )
 
+interface AuthenticationDelegate<Client> {
+    fun authenticate(
+        request: ResourceServerRequest,
+        completion: (APIViewAuthenticationResult<Client>?, Exception?) -> Unit
+    )
+}
+
+class DefaultAuthenticationDelegate<Client> : AuthenticationDelegate<Client> {
+    override fun authenticate(
+        request: ResourceServerRequest,
+        completion: (APIViewAuthenticationResult<Client>?, Exception?) -> Unit
+    ) {
+        completion(null, null)
+    }
+}
+
+interface PermissionsDelegate<Client, RequestParameters> {
+    @Throws(APIException.InsufficientPermissions::class)
+    fun checkPermissions(request: APIRequest<Client, RequestParameters>)
+}
+
+class DefaultPermissionsDelegate<Client, RequestParameters> : PermissionsDelegate<Client, RequestParameters> {
+    override fun checkPermissions(request: APIRequest<Client, RequestParameters>) {
+
+    }
+}
+
 abstract class GenericReadAPIView<Client, RequestParameters, ResponseObject> : APIView {
 
     //TODO: potientially return exception here to indicate that authentication has failed
-    abstract fun authenticate(request: ResourceServerRequest, completion: (APIViewAuthenticationResult<Client>?, Exception?) -> Unit)
+//    abstract fun authenticate(request: ResourceServerRequest, completion: (APIViewAuthenticationResult<Client>?, Exception?) -> Unit)
+    open val authenticationDelegate: AuthenticationDelegate<Client>
+        get() = DefaultAuthenticationDelegate()
 
     @Throws(APIException.MalformedRequest::class)
     abstract fun convertParameters(request: ResourceServerRequest) : RequestParameters?
 
-    @Throws(APIException.InsufficientPermissions::class)
-    abstract fun checkPermissions(request: APIRequest<Client, RequestParameters>)
+    open val permissionsDelegate: PermissionsDelegate<Client, RequestParameters>
+        get() = DefaultPermissionsDelegate()
 
     abstract fun getObjects(request: APIRequest<Client, RequestParameters>) : List<ResponseObject>
 
@@ -64,7 +96,7 @@ abstract class GenericReadAPIView<Client, RequestParameters, ResponseObject> : A
         val authOpt: Maybe<APIViewAuthenticationResult<Client>>
         try {
             authOpt = Single.create<Maybe<APIViewAuthenticationResult<Client>>> { emitter ->
-                authenticate(request) { auth, error ->
+                authenticationDelegate.authenticate(request) { auth, error ->
 
                     if (error != null) {
                         emitter.onError(error)
@@ -103,7 +135,7 @@ abstract class GenericReadAPIView<Client, RequestParameters, ResponseObject> : A
 
         //check for throws
         try {
-            checkPermissions(apiRequest)
+            permissionsDelegate.checkPermissions(apiRequest)
         }
         catch (e: APIException.InsufficientPermissions) {
             val response = APIResponse(403, null, e)

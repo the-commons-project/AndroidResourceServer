@@ -157,10 +157,6 @@ class SampleContentProvider : ContentProvider() {
         return true
     }
 
-    override fun insert(uri: Uri, values: ContentValues?): Uri? {
-        TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
-    }
-
     fun getTokenString(uri: Uri, clientId: String) : String? {
         val base64EncryptedToken: String = uri.getQueryParameter("token") ?: return null
         val encryptedTokenData: ByteArray = Base64.decode(base64EncryptedToken, Base64.DEFAULT)
@@ -323,6 +319,10 @@ class SampleContentProvider : ContentProvider() {
 
         val response = handleAPIViewRequestAsync(requestHandler.view, uri, resourceServerRequest)
         return generateCursor(clientId, response)
+    }
+
+    override fun insert(uri: Uri, values: ContentValues?): Uri? {
+        TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
     }
 
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<String>?): Int {
